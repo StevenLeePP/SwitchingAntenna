@@ -1,51 +1,39 @@
 # 4T4R Type-A 单符号 Type-1 DM-RS 实时实验
 
-## 1. 版本边界与备份
+## 1. 程序概述
 
-本目录是独立的新实现，不覆盖上一版自定义 FDM 导频代码。
+本项目实现了一个基于 YunSDR 软件无线电平台的 4T4R MIMO 实时通信系统。接收端以 122.88 MS/s（4 倍于发射采样率）轮询四根天线，通过数字域解交织恢复四路 30.72 MS/s 虚拟接收流，在单 RF 链条件下实现 4×4 MIMO 空间复用。
 
-- 上一版完整备份：`../nr4x4_backup_20260706_pre_type1`
-- 本方案目录：`nr4x4_type1`
-- TX：`bupt@10.156.64.30`，cell-04
-- RX：`bupt@10.156.64.41`，cell-08
+**系统架构**
 
-本方案中只有一个 NR 小区，PCI 为 0。四根 TX 天线不再模拟四个
-独立 PCI，而是分别承载一个 PDSCH 逻辑层和一个标准 DM-RS 端口。
+发射端周期发射一个 10 ms NR 无线帧：Slot 0 承载标准 SS/PBCH block（仅 TX1 发送），Slot 1～19 承载 Mapping Type A、Type-1 单符号 DM-RS 的四层 QPSK 数据。每层每 slot 独立进行 K=7、R=1/2 卷积编码（7950 信息 bit → 7956 QPSK 符号），四层采用单位预编码直接映射到四根物理发射天线。
 
-标准范围：
+接收端 C MEX 后台线程以 122.88 MS/s 连续采集四路物理 RX IQ 并写入环形缓冲区。MATLAB 前台周期取快照，经数字射频开关解交织得到四路 30.72 MS/s 虚拟接收流，执行 PSS 定时同步 → CP 细频偏估计与补偿 → OFDM 解调 → SSS 校验 → PBCH 解码与 MIB 比对 → 每 slot 独立 Type-1 DM-RS OCC 解扩信道估计 → 逐 RE 的 RZF 均衡 → 硬判决 + Viterbi 解码 → BER/EVM 统计。
 
-- PSS、SSS、PBCH、PBCH DM-RS、BCH/Polar：标准 NR；
-- PDSCH Mapping Type A、Type-1 DM-RS资源位置、序列和 OCC：标准 NR；
-- 数据区域使用自定义 QPSK 和终止卷积码，不是完整标准 PDSCH，
-  因为没有使用 DL-SCH/LDPC、标准速率匹配和完整 MAC 调度。
+**技术要点**
+
+- 物理层遵循 3GPP NR 标准：30 kHz SCS、51 RB、Type-1 DM-RS 的 FDM+CDM 四端口复用、标准 SS/PBCH block。
+- 数字射频开关将四相轮询建模为模 4 选通与因子 4 解交织，通道间固定偏移由 DM-RS 信道估计吸收。
+- 接收机支持运行时选择 RX 通道数（1～4），RX 不足 4 时自动退化为频谱/同步/PBCH 监测模式。
+- 实时显示采用带内 vs 保护带 PSD 差（> 8 dB）检测信号存在性，TX 消失时即时清空星座图。
+- 离线自检（`type1_selftest.m`）不依赖硬件，可注入已知 CFO 和 AWGN 完整验证链路。
+
+**文件组织**
+
+| 层次 | 主要文件 |
+|------|----------|
+| 配置 | `type1_config.m`, `type1_pdsch_config.m`, `type1_carrier_config.m` |
+| 参考生成 | `type1_build_package.m`, `type1_generate_reference.m`, `type1_make_mib_bits.m` |
+| 发射 | `type1_tx.m`, `type1_tx_stop.m` |
+| 接收 | `type1_rx_live.m`, `type1_yunsdr_rx_mex.c`, `type1_build_rx_mex.m`, `type1_digital_switch.m` |
+| 分析 | `type1_analyze.m`, `type1_analyze_fast.m`, `type1_read_initial_iq.m` |
+| 工具 | `type1_load_package.m`, `type1_selftest.m`, `plot_type1_resources.py` |
 
 ## 2. 快速使用
 
-所有命令默认在工程目录运行：
-
-```bash
-cd /home/bupt/tools/matlab_test/nr4x4_type1
-```
-
-### 2.1 显示界面运行
-
-TX 端 cell-04：
-
-```matlab
-cd('/home/bupt/tools/matlab_test/nr4x4_type1')
-type1_tx
-```
-
-RX 端 cell-08：
-
-```matlab
-cd('/home/bupt/tools/matlab_test/nr4x4_type1')
-addpath('/home/bupt/tools/matlab_test')
-addpath(pwd)
-clear functions
-which type1_rx_live -all
-type1_rx_live
-```
+### 2.1 可视化界面运行
+TX 端运行 `type1_tx.m`
+RX 端运行 `type1_rx_live.m`持续接收
 
 正确 RX 程序启动后应打印：
 
@@ -53,10 +41,7 @@ type1_rx_live
 ========== YunSDR Type-A live RX ==========
 ```
 
-如果看到 `live t=`、`PSS_peak[NID2 0/1/2]` 或
-`SSS_rel_dB[PCI 0 1 2 3]`，说明误运行了旧接收机。
-
-### 2.2 无显示界面运行
+### 2.2 无显示界面运行（用于远程服务器）
 
 TX，限时 60 秒：
 
@@ -98,7 +83,7 @@ printf '1\n' | sudo -S -p '' \
 | `cfg.nHardwareRxChannels` | 4 | MEX 从 YunSDR 采集的物理 RX 通道数 |
 | `cfg.rxChannelSelect` | `1:4` | 参与分析的虚拟 RX 通道编号 |
 | `cfg.nRxChannels` | 4 | 实际参与 DSP 的 RX 维度数，由 `rxChannelSelect` 决定 |
-| `TYPE1_RX_CHANNEL_SELECT` | 空 | 运行时选择 RX，例如 `1,3` |
+| `TYPE1_RX_CHANNEL_SELECT` | 空 | 运行时选择 RX，例如 `1,3`（`TYPE1_RX_CHANNELS` 为等效别名） |
 | `TYPE1_N_RX_CHANNELS` | 空 | 运行时选择前 N 根 RX，例如 `2` 表示 RX1/RX2 |
 | `TYPE1_LIVE_UPDATE_SEC` | 0.10 | 实时刷新周期 |
 | `TYPE1_LIVE_VISIBLE` | `on` | `off` 表示无显示界面运行 |
@@ -125,8 +110,7 @@ type1_initial_iq_YYYYMMDD_HHMMSS_seqXXXX_meta.mat
 含义：
 
 - `raw122`：122.88 MS/s，4 个物理 RX 通道，20 ms；
-- `virtual30`：经过数字开关/解交织后的 30.72 MS/s，4 个虚拟 RX
-  维度，正好 2 个 frame / 40 个 slot；
+- `virtual30`：经过数字开关/解交织后的 30.72 MS/s，4 个虚拟 RX 维度，正好 2 个 frame （ 40 个 slot）；
 - `meta.mat`：采样率、样本数、时间戳、sequence 等辅助信息。
 
 二进制格式为：
@@ -148,28 +132,32 @@ cd('/home/bupt/tools/matlab_test/nr4x4_type1')
 type1_read_initial_iq
 ```
 
-该脚本会用 `fopen/fread` 找到最新的 `raw122` 和 `virtual30` 文件，
-打印每通道 RMS、峰值和 DC，并绘制时域幅度与快速频谱。
+该脚本会用 `fopen/fread` 找到最新的 `raw122` 和 `virtual30` 文件，打印每通道 RMS、峰值和 DC，并绘制时域幅度与快速频谱。
 
 ## 3. 文件说明
 
 | 文件 | 作用 |
 |------|------|
-| `type1_config.m` | 射频、OFDM、SSB、Type-A 和编码参数 |
-| `type1_pdsch_config.m` | 创建严格 Type-A、Type-1 四端口 DM-RS 配置 |
-| `type1_build_package.m` | 构造资源网格、共享数据和四通道波形 |
-| `type1_generate_reference.m` | 生成 TX/RX 共用的 MAT 文件 |
-| `nr4_type1_reference.mat` | 四层比特、QPSK、DM-RS、网格和波形 |
+| `type1_config.m` | 射频、OFDM、SSB、Type-A 和编码参数（全局唯一配置源） |
+| `type1_carrier_config.m` | 创建标准 nrCarrierConfig 对象，供 OFDM 调制/解调使用 |
+| `type1_pdsch_config.m` | 创建严格 Type-A、Type-1 四端口 DM-RS 的 PDSCH 配置 |
+| `type1_make_mib_bits.m` | 构造确定性 24-bit MIB 比特字段 |
+| `type1_build_package.m` | 构造资源网格、比特、DM-RS 和四通道发射波形 |
+| `type1_generate_reference.m` | 调用 build_package 并保存为 TX/RX 共用的 MAT 文件 |
+| `nr4_type1_reference.mat` | 四层比特、QPSK、DM-RS、网格和 307200×4 波形 |
+| `type1_load_package.m` | 加载并校验共享 MAT 文件（格式版本/端口/映射类型） |
+| `type1_digital_switch.m` | 四相射频开关：122.88 MS/s 轮询 → 四路 30.72 MS/s 虚拟接收 |
 | `type1_tx.m` | 四通道 30.72 MS/s 周期发射；函数退出时自动清理 |
 | `type1_tx_stop.m` | 显式关闭板卡循环发送，异常退出后必须执行 |
-| `type1_rx_live.m` | 实时频谱、同步、均衡、星座和 BER；支持选择 RX 通道 |
-| `type1_analyze.m` | CFO、PSS/SSS/PBCH、DM-RS估计和 nRx×nLayer RZF |
-| `type1_analyze_fast.m` | 实时窗口使用的单数据 slot 快速分析 |
+| `type1_rx_live.m` | 实时频谱、同步、均衡、星座和 BER；支持运行时选择 RX 通道 |
+| `type1_analyze.m` | 全 19 slot 分析：CFO、PSS/SSS/PBCH、DM-RS 估计和 nRx×nLayer RZF |
+| `type1_analyze_fast.m` | 实时窗口使用的单 slot 快速分析（单 PSS 假设，仅均衡 slot 10） |
 | `type1_read_initial_iq.m` | 用 `fopen/fread` 读取启动时保存的 20 ms IQ 并简要分析 |
-| `type1_yunsdr_rx_mex.c` | 122.88 MS/s 四通道后台内存采集 |
-| `type1_selftest.m` | 不访问板卡的完整软件闭环 |
-| `plot_type1_resources.py` | 生成英文帧结构和 DM-RS资源网格图 |
-| `data/` | 每次 RX 启动时保存的短 IQ 二进制文件 |
+| `type1_yunsdr_rx_mex.c` | 122.88 MS/s 四通道后台 pthread 环形缓冲采集 |
+| `type1_build_rx_mex.m` | 编译 YunSDR 后台采集 MEX（链接 libyunsdr_ss.so） |
+| `type1_selftest.m` | 不访问板卡的完整软件闭环（注入 CFO + AWGN，验证 BER/EVM） |
+| `plot_type1_resources.py` | 生成英文帧结构和 DM-RS 资源网格图 |
+| `data/` | 每次 RX 启动时保存的 raw122 和 virtual30 短 IQ 及离线分析脚本 |
 
 ## 4. 基本参数
 
@@ -191,7 +179,7 @@ type1_read_initial_iq
 
 ## 5. 10 ms 帧结构
 
-### 4.1 Slot 0：专用 SSB slot
+### 5.1 Slot 0：专用 SSB slot
 
 Slot 0 不发送自定义数据：
 
@@ -204,7 +192,7 @@ Slot 0 不发送自定义数据：
 
 这一个 slot 为 RX 提供帧起点、PCI 和 PBCH/MIB 验证。
 
-### 4.2 Slot 1～19：Type-A 数据 slot
+### 5.2 Slot 1～19：Type-A 数据 slot
 
 每个数据 slot 都占用完整 51 RB：
 
@@ -430,15 +418,13 @@ YunSDR C API 读取 4 路 122.88 MS/s IQ，并写入 MATLAB 外部的环形
 [raw122, timestamps, sequence] = type1_yunsdr_rx_mex('snapshot', blocks);
 ```
 
-这样做的经验是：
+这样做的设计考量：
 
-- 板卡高速采集与 MATLAB 绘图/解码解耦，避免图形刷新卡住 DMA；
-- `sequence` 是软件环形缓冲收到的 block 计数；
-- `timestamps` 来自 YunSDR 读接口返回的硬件时间戳，当前按原始
-  122.88 MS/s 采样点推进；
-- `Reported HW buf depth` 是厂商驱动报告的硬件缓冲深度单位，只能
-  作为队列水位参考，真正是否丢数仍要看 timestamp 连续性、
-  overflow/count/timeout 事件和 `sequence` 增量。
+- 板卡高速采集与 MATLAB 绘图解耦，避免图形刷新阻塞 DMA；
+- `sequence` 为软件环形缓冲接收的 block 总数；
+- `timestamps` 来自 YunSDR 硬件时间戳，按 122.88 MS/s 推进；
+- 厂商报告的硬件缓冲深度仅供参考，真正是否丢数需检查 timestamp
+  连续性、overflow/count/timeout 事件和 `sequence` 增量。
 
 每次停止时会读取：
 
@@ -515,9 +501,8 @@ printf '1\n' | sudo -S -p '' \
 - 在 MATLAB 内按 Stop 或 Ctrl+C；
 - 初始化或状态循环中抛出 MATLAB 异常。
 
-MATLAB 的 Pause 只表示暂停执行，程序和发射都应继续保持，因而
-不会触发清理。先 Pause 再按 Stop，或直接按 Stop，才会退出函数并
-执行清理。成功清理时终端打印：
+MATLAB 的 Pause 仅暂停执行，TX 继续发射，不触发清理。按 Stop 或 Ctrl+C
+才会退出函数并执行清理。成功清理时终端打印：
 
 ```text
 Type-A TX cleanup: cyclic disable ret=0; YunSDR device closed.
@@ -612,7 +597,7 @@ PSD；“存在频谱坐标和噪声曲线”不代表存在 OFDM 信号。实�
 - 分析结束前再读取最新 1 ms，若 TX 已消失，则丢弃刚计算出的旧
   星座，防止 MATLAB 绘图延迟造成“关 TX 后仍在画”的假象。
 
-## 10. 帧结构与时频资源图
+## 12. 帧结构与时频资源图
 
 运行：
 
@@ -629,7 +614,7 @@ python3 plot_type1_resources.py
 
 图片只使用英文字符，避免 Python/Matplotlib 中文字体缺失。
 
-## 11. 2026-07-06 实机结果
+## 13. 2026-07-06 实机结果
 
 cell-04 TX → cell-08 RX，8 秒测试：
 
@@ -661,7 +646,7 @@ cell-04 TX → cell-08 RX，8 秒测试：
 届时应使用 additional DM-RS 或 PT-RS，而不是在接收端用已知数据
 掩盖信道变化。
 
-### 11.1 快速绘图与 TX 关闭测试
+### 13.1 快速绘图与 TX 关闭测试
 
 让 TX 自动停止、RX 继续运行的 20 s 测试结果：
 
@@ -681,7 +666,7 @@ cell-04 TX → cell-08 RX，8 秒测试：
 /home/bupt/tools/matlab_test/nr4x4_type1/captures/type1_live_20260706_163748
 ```
 
-### 11.2 “未启动 TX 仍出现 OFDM/星座”的排查结论
+### 13.2 “未启动 TX 仍出现 OFDM/星座”的排查结论
 
 2026-07-06 在 cell-04 发现 root 用户的 MATLAB GUI 进程仍持有：
 
@@ -711,7 +696,7 @@ cell-04 TX → cell-08 RX，8 秒测试：
 器不会把无结构噪声变成可正确解码的 QPSK；此前看到的有效星座来
 自未关闭的硬件循环发射，而非噪声被“强制拟合”为 QPSK。
 
-### 11.3 自动清理修改后的链路复测
+### 13.3 自动清理修改后的链路复测
 
 将 `type1_tx.m` 改为函数入口后，cell-04 TX → cell-08 RX 的 12 秒
 复测结果：
@@ -742,7 +727,7 @@ $$
 它本来就不是四点 QPSK，呈现云团是正确现象。右侧均衡后才是分离
 出的四层 QPSK；本次实测四个点簇清晰，且 BER 为 0。
 
-### 11.4 GUI 误运行旧接收机的典型表现
+### 13.4 GUI 误运行旧接收机的典型表现
 
 若 Type-1 TX 正在发射，却运行旧 `nr4x4/rx_nr4_live.m`，旧接收机
 仍可能通过 TX1 上的 PCI 0 SSB 找到一个相关峰，但它随后会用旧的
