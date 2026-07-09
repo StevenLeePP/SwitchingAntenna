@@ -1,0 +1,19 @@
+function outputFile = type1_build_rx_mex()
+%TYPE1_BUILD_RX_MEX Compile the background YunSDR memory-reader MEX.
+%  Links against libyunsdr_ss.so in the parent SDK directory.
+%  Output: type1_yunsdr_rx_mex.<mexext> in the current directory.
+
+sourceDir = fileparts(mfilename('fullpath'));
+sourceFile = fullfile(sourceDir, 'type1_yunsdr_rx_mex.c');
+sdkDir = fileparts(sourceDir);
+outputFile = fullfile(sourceDir, ['type1_yunsdr_rx_mex.' mexext]);
+
+mex('-R2018a', ...
+    ['-I' sdkDir], ...
+    ['-L' sdkDir], ...
+    '-lyunsdr_ss', ...
+    ['LDFLAGS=$LDFLAGS -Wl,-rpath,' sdkDir], ...
+    '-output', fullfile(sourceDir, 'type1_yunsdr_rx_mex'), ...
+    sourceFile);
+fprintf('Built %s\n', outputFile);
+end

@@ -1,0 +1,1216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="GreenMO 单 RF 链 OFDM 全流程可视化仿真">
+  <title>GreenMO · 单 RF 链 OFDM 公式与波形可视化</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: #0d1a2b;
+      --panel-2: #101f33;
+      --line: #223653;
+      --text: #e7eef9;
+      --muted: #8fa3bd;
+      --cyan: #43d8d2;
+      --blue: #62a9ff;
+      --violet: #a98bff;
+      --orange: #ffb45e;
+      --pink: #ff719a;
+      --green: #67dfa4;
+      --red: #ff6f78;
+      --paper: #e8b86d;
+      --assume: #8ca8ff;
+      color-scheme: dark;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% -10%, rgba(67,216,210,.13), transparent 30rem),
+        radial-gradient(circle at 90% 10%, rgba(169,139,255,.11), transparent 34rem),
+        var(--bg);
+      font: 15px/1.7 Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    a { color: var(--cyan); }
+    button, input, select { font: inherit; }
+    .shell { width: min(1460px, calc(100% - 36px)); margin: auto; }
+
+    header {
+      position: relative;
+      overflow: hidden;
+      padding: 58px 0 34px;
+      border-bottom: 1px solid var(--line);
+    }
+    header::after {
+      content: "";
+      position: absolute;
+      width: 420px;
+      height: 420px;
+      right: -160px;
+      top: -230px;
+      border: 1px solid rgba(67,216,210,.22);
+      border-radius: 50%;
+      box-shadow: 0 0 0 55px rgba(67,216,210,.025), 0 0 0 110px rgba(67,216,210,.018);
+      pointer-events: none;
+    }
+    .eyebrow {
+      margin-bottom: 12px;
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 950px;
+      margin: 0;
+      font-size: clamp(34px, 5.2vw, 72px);
+      line-height: 1.08;
+      letter-spacing: -.045em;
+    }
+    .lede {
+      max-width: 900px;
+      margin: 22px 0 0;
+      color: #b7c6d9;
+      font-size: clamp(16px, 1.5vw, 20px);
+    }
+    .source-note {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .source-note span { display: inline-flex; align-items: center; gap: 7px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--paper); }
+
+    .toolbar-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      border-bottom: 1px solid var(--line);
+      background: rgba(7,17,31,.88);
+      backdrop-filter: blur(16px);
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 66px;
+      overflow-x: auto;
+    }
+    .toolbar label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    input, select {
+      height: 36px;
+      padding: 0 10px;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      outline: none;
+      background: #0a1626;
+    }
+    input[type="number"] { width: 90px; }
+    input[type="range"] { width: 120px; padding: 0; accent-color: var(--cyan); }
+    button {
+      height: 38px;
+      padding: 0 17px;
+      border: 0;
+      border-radius: 9px;
+      color: #031014;
+      background: var(--cyan);
+      font-weight: 750;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.08); }
+    .toolbar .spacer { flex: 1; }
+    .status { min-width: 116px; color: var(--green); font-size: 13px; white-space: nowrap; }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin: 28px 0 18px;
+    }
+    .metric {
+      min-height: 105px;
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: linear-gradient(145deg, rgba(16,31,51,.95), rgba(11,24,40,.85));
+    }
+    .metric small { display: block; color: var(--muted); }
+    .metric strong { display: block; margin-top: 4px; font-size: 24px; letter-spacing: -.03em; }
+    .metric em { color: var(--cyan); font-style: normal; font-size: 12px; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(120px, 1fr));
+      gap: 7px;
+      margin: 22px 0 50px;
+    }
+    .flow a {
+      position: relative;
+      padding: 13px 10px 12px;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      text-decoration: none;
+      font-size: 12px;
+      text-align: center;
+    }
+    .flow a:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -10px;
+      z-index: 2;
+      color: var(--cyan);
+    }
+    .flow b { display: block; color: var(--cyan); font-size: 11px; letter-spacing: .08em; }
+
+    section { scroll-margin-top: 88px; margin: 0 0 64px; }
+    .section-head {
+      display: grid;
+      grid-template-columns: 80px minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+      margin-bottom: 22px;
+    }
+    .step-no {
+      color: var(--cyan);
+      font-size: 44px;
+      font-weight: 250;
+      line-height: 1;
+      letter-spacing: -.07em;
+    }
+    h2 { margin: 0; font-size: clamp(24px, 3vw, 38px); line-height: 1.2; letter-spacing: -.025em; }
+    h3 { margin: 0 0 9px; font-size: 17px; }
+    .section-head p { max-width: 900px; margin: 9px 0 0; color: var(--muted); }
+
+    .formula {
+      overflow-x: auto;
+      margin: 16px 0 20px;
+      padding: 16px 20px;
+      border: 1px solid rgba(67,216,210,.22);
+      border-left: 3px solid var(--cyan);
+      border-radius: 0 11px 11px 0;
+      color: #dcecff;
+      background: rgba(67,216,210,.045);
+      font: 17px/1.75 "Cambria Math", "STIX Two Math", Georgia, serif;
+      white-space: nowrap;
+    }
+    .formula .explain {
+      margin-left: 24px;
+      color: var(--muted);
+      font: 13px/1.6 Inter, "PingFang SC", sans-serif;
+    }
+    .formula .accent { color: var(--cyan); }
+
+    .grid-2, .grid-3 {
+      display: grid;
+      gap: 14px;
+    }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    .card {
+      min-width: 0;
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(150deg, rgba(16,31,51,.96), rgba(10,22,38,.94));
+      box-shadow: 0 16px 45px rgba(0,0,0,.12);
+    }
+    .card-head { display: flex; justify-content: space-between; align-items: start; gap: 14px; margin-bottom: 7px; }
+    .card-head p, .card > p { margin: 0; color: var(--muted); font-size: 13px; }
+    .tag {
+      flex: none;
+      padding: 3px 8px;
+      border-radius: 99px;
+      color: var(--cyan);
+      background: rgba(67,216,210,.1);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .06em;
+    }
+    .tag.orange { color: var(--orange); background: rgba(255,180,94,.1); }
+    .tag.violet { color: var(--violet); background: rgba(169,139,255,.1); }
+    .plot { position: relative; min-height: 284px; margin-top: 10px; }
+    canvas { display: block; width: 100%; height: 280px; }
+    .wide-card { grid-column: 1 / -1; }
+
+    .callout {
+      margin-top: 15px;
+      padding: 14px 17px;
+      border: 1px solid rgba(255,180,94,.25);
+      border-radius: 11px;
+      color: #c7d2e2;
+      background: rgba(255,180,94,.055);
+      font-size: 13px;
+    }
+    .callout strong { color: var(--orange); }
+    .readout {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 13px;
+    }
+    .readout div { padding: 10px; border-radius: 8px; color: var(--muted); background: rgba(0,0,0,.15); font-size: 12px; }
+    .readout b { display: block; color: var(--text); font-size: 17px; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; font-weight: 650; }
+    td { font-size: 13px; }
+    .origin { display: inline-flex; padding: 2px 7px; border-radius: 99px; font-size: 10px; white-space: nowrap; }
+    .origin.paper { color: var(--paper); background: rgba(232,184,109,.1); }
+    .origin.assume { color: var(--assume); background: rgba(140,168,255,.1); }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(4, 36px);
+      gap: 5px;
+      justify-content: center;
+      margin: 18px auto;
+    }
+    .matrix span {
+      display: grid;
+      width: 36px;
+      height: 28px;
+      place-items: center;
+      border-radius: 5px;
+      color: #61738a;
+      background: #101b2b;
+      font: 12px ui-monospace, monospace;
+    }
+    .matrix span.on { color: #041414; background: var(--cyan); }
+    .matrix-label { color: var(--muted); font-size: 12px; text-align: center; }
+
+    footer {
+      margin-top: 70px;
+      padding: 34px 0 48px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .noscript { margin: 30px auto; padding: 20px; color: #fff; background: #8b2633; }
+
+    @media (max-width: 1100px) {
+      .summary { grid-template-columns: repeat(3, 1fr); }
+      .flow { grid-template-columns: repeat(4, 1fr); }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 22px, 1460px); }
+      header { padding-top: 38px; }
+      .summary { grid-template-columns: repeat(2, 1fr); }
+      .flow { grid-template-columns: repeat(2, 1fr); }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .section-head { grid-template-columns: 54px minmax(0,1fr); gap: 12px; }
+      .step-no { font-size: 34px; }
+      .readout { grid-template-columns: repeat(2, 1fr); }
+      .toolbar .spacer { display: none; }
+      .metric strong { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="shell">
+      <div class="eyebrow">Formula → waveform → spectrum</div>
+      <h1>单 RF 链，如何接住四路 OFDM？</h1>
+      <p class="lede">
+        把原页面中的“时域相乘 → 频谱搬移 → ADC 混叠 → 数字解扩”逐式变成可计算的波形。
+        下方不是概念示意图：所有时域曲线、频谱、星座和误差指标均由浏览器内同一组复数 IQ 样本实时生成。
+      </p>
+      <div class="source-note">
+        <span><i class="dot"></i>论文：GreenMO, ACM MobiCom ’23</span>
+        <span>原型：8 天线 / 4 VRF / 1 个 40 MHz ADC</span>
+        <span><a href="Mobicom-23'-MIMO with a Single RF Chain.pdf" target="_blank">打开本地论文 PDF ↗</a></span>
+      </div>
+    </div>
+  </header>
+
+  <div class="toolbar-wrap">
+    <div class="shell toolbar">
+      <label>随机种子 <input id="seedInput" type="number" value="2026" min="1" max="999999"></label>
+      <label>SNR <input id="snrInput" type="range" value="15" min="5" max="30" step="1"><b id="snrLabel">15 dB</b></label>
+      <label>观察支路
+        <select id="phaseSelect">
+          <option value="0">c₀ / VRF 0</option>
+          <option value="1">c₁ / VRF 1</option>
+          <option value="2">c₂ / VRF 2</option>
+          <option value="3">c₃ / VRF 3</option>
+        </select>
+      </label>
+      <button id="runButton">重新仿真</button>
+      <span class="spacer"></span>
+      <span id="status" class="status">● 仿真就绪</span>
+    </div>
+  </div>
+
+  <main class="shell">
+    <div class="summary">
+      <div class="metric"><small>空间流 / VRF</small><strong>4 / 4</strong><em>论文原型</em></div>
+      <div class="metric"><small>物理 RF / ADC</small><strong>1 / 1</strong><em>核心约束</em></div>
+      <div class="metric"><small>单流占用带宽 B</small><strong>10 MHz</strong><em>论文原型</em></div>
+      <div class="metric"><small>ADC 采样率 NB</small><strong>40 MS/s</strong><em>T<sub>s</sub> = 25 ns</em></div>
+      <div class="metric"><small>OFDM 子载波</small><strong>64</strong><em>48 data + 4 pilot</em></div>
+      <div class="metric"><small>调制与信噪比</small><strong>16-QAM</strong><em id="heroSnr">15 dB SISO</em></div>
+    </div>
+
+    <nav class="flow" aria-label="仿真流程">
+      <a href="#parameters"><b>00</b>参数口径</a>
+      <a href="#ofdm"><b>01</b>OFDM 发射</a>
+      <a href="#switch"><b>02</b>正交开关码</a>
+      <a href="#spread"><b>03</b>模拟扩频</a>
+      <a href="#adc"><b>04</b>合路与 ADC</a>
+      <a href="#despread"><b>05</b>数字解扩</a>
+      <a href="#recover"><b>06</b>MIMO 恢复</a>
+    </nav>
+
+    <section id="parameters">
+      <div class="section-head">
+        <div class="step-no">00</div>
+        <div>
+          <h2>先把“论文数据”和“仿真假设”分开</h2>
+          <p>论文没有列出完整的 OFDM 数值学参数。直接给出的参数原样采用；为形成可重复的离散仿真而补充的项目明确标注，避免伪装成论文结论。</p>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>项目</th><th>本页取值</th><th>来源</th><th>如何进入仿真</th></tr></thead>
+          <tbody>
+            <tr><td>天线 / 空间流 / VRF / 物理 RF 链</td><td>8 / 4 / 4 / 1</td><td><span class="origin paper">论文 §4–5</span></td><td>8×4 空口信道经二值开关矩阵压缩为 4×4 等效信道</td></tr>
+            <tr><td>单流带宽 / ADC 采样带宽</td><td>10 MHz / 40 MHz</td><td><span class="origin paper">论文 §4</span></td><td>B = 10 MHz，N = 4，所以 f<sub>s,ADC</sub> = NB = 40 MS/s</td></tr>
+            <tr><td>OFDM 子载波</td><td>64：48 数据、4 导频、12 空</td><td><span class="origin paper">论文 §4</span></td><td>有效载波 k = −26…−1, 1…26；导频 k = ±7, ±21</td></tr>
+            <tr><td>调制 / 平均 SISO SNR</td><td>16-QAM / 15 dB</td><td><span class="origin paper">论文 §5(a)</span></td><td>归一化 Gray 16-QAM；单 ADC 处加入复高斯白噪声</td></tr>
+            <tr><td>FFT / CP / 子载波间隔</td><td>64 / 16 / 156.25 kHz</td><td><span class="origin assume">比例化假设</span></td><td>论文只给 64 子载波；本页取 1/4 CP，Δf = 10 MHz / 64</td></tr>
+            <tr><td>信道</td><td>单 OFDM 符号内平坦、8×4 复 Rayleigh</td><td><span class="origin assume">可视化假设</span></td><td>突出扩频/解扩机制；随机种子控制并保证可复现</td></tr>
+            <tr><td>模拟波形内部采样率</td><td>160 MS/s（16×B）</td><td><span class="origin assume">数值精度</span></td><td>仅用于画连续时间近似和开关边沿；真实 ADC 仍严格抽取到 40 MS/s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout"><strong>时间尺度：</strong>有效 OFDM 符号 T<sub>u</sub> = 64 / 10 MHz = 6.4 μs；CP = 1.6 μs；总符号 8 μs。开关码周期 T<sub>0</sub> = 1/B = 100 ns，每码导通 25 ns，恰好对齐 40 MS/s ADC 的一个采样间隔。</div>
+    </section>
+
+    <section id="ofdm">
+      <div class="section-head">
+        <div class="step-no">01</div>
+        <div>
+          <h2>四路 16-QAM → 64 子载波 OFDM</h2>
+          <p>四个用户使用相同的 10 MHz 空口频带同时发送，而不是做 FDMA。每个有源子载波承载一个复数 16-QAM 符号。</p>
+        </div>
+      </div>
+      <div class="formula">
+        X<sub>u</sub>[k] ∈ 16-QAM，
+        x<sub>u</sub>[n] = <span class="accent">1/√64</span> ∑<sub>k=−32</sub><sup>31</sup> X<sub>u</sub>[k]e<sup>j2πkn/64</sup>，
+        x<sub>u,cp</sub> = [x<sub>u</sub>[48:63], x<sub>u</sub>[0:63]]
+        <span class="explain">u = 0,1,2,3；单位化 IFFT 保持频域与时域能量相等</span>
+      </div>
+      <div class="grid-2">
+        <article class="card">
+          <div class="card-head"><div><h3>资源栅格与 16-QAM 星座</h3><p>青色 = 数据，橙色 = 导频，深色 = 空载波/DC</p></div><span class="tag">频域映射</span></div>
+          <div class="plot"><canvas id="gridPlot"></canvas></div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>OFDM 时域复包络</h3><p>显示用户 0 的 I/Q；灰色区域为循环前缀</p></div><span class="tag">10 MS/s</span></div>
+          <div class="plot"><canvas id="ofdmTimePlot"></canvas></div>
+        </article>
+        <article class="card wide-card">
+          <div class="card-head"><div><h3>四路发射信号频谱</h3><p>四个用户完全同频；频谱差异来自各自独立的 16-QAM 数据</p></div><span class="tag violet">B = 10 MHz</span></div>
+          <div class="plot"><canvas id="ofdmSpectrumPlot"></canvas></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="switch">
+      <div class="section-head">
+        <div class="step-no">02</div>
+        <div>
+          <h2>1/4 占空比的循环时移开关码</h2>
+          <p>四个码频率相同，只在一个 100 ns 周期内依次错开 25 ns。它们互不重叠，因此每个 ADC 采样时刻只会落入一个码的导通窗。</p>
+        </div>
+      </div>
+      <div class="formula">
+        c<sub>q</sub>(t) = c<sub>0</sub>(t − q/NB)，q ∈ {0,1,2,3}；
+        C<sub>q,k</sub> = <span class="accent">1/N · sinc(k/N)</span>e<sup>−j2πkq/N</sup>
+        <span class="explain">幅度包络相同，相位标签 e<sup>−j2πkq/N</sup> 不同</span>
+      </div>
+      <div class="grid-2">
+        <article class="card">
+          <div class="card-head"><div><h3>c₀…c₃ 的时域导通窗</h3><p>每周期四个不重叠时隙；虚线为 25 ns ADC 采样点</p></div><span class="tag">T₀ = 100 ns</span></div>
+          <div class="plot"><canvas id="codeTimePlot"></canvas></div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>开关码傅里叶级数</h3><p>|C<sub>k</sub>| 在 kB = 0, ±10, ±20… MHz 产生谐波</p></div><span class="tag orange">频谱冲激</span></div>
+          <div class="plot"><canvas id="codeSpectrumPlot"></canvas></div>
+        </article>
+      </div>
+      <div class="callout"><strong>选择上方“观察支路”</strong>可切换 c<sub>q</sub>。幅度谱不会改变，但时移会给第 k 次谐波附加 −2πkq/4 的线性相位；这正是后续可分离的“频域指纹”。</div>
+    </section>
+
+    <section id="spread">
+      <div class="section-head">
+        <div class="step-no">03</div>
+        <div>
+          <h2>RF 开关相乘：10 MHz 被复制到各次谐波</h2>
+          <p>每根天线接收四路用户的空间叠加。二值矩阵 S 决定某根天线在哪些码相位导通；页面使用 8×4 多对多连接，符合论文的 M &gt; N 场景。</p>
+        </div>
+      </div>
+      <div class="formula">
+        r<sub>m</sub>(t) = ∑<sub>u=0</sub><sup>3</sup> h<sub>m,u</sub>x<sub>u</sub>(t)，
+        y<sub>q</sub>(t) = c<sub>q</sub>(t)∑<sub>m=0</sub><sup>7</sup>S<sub>m,q</sub>r<sub>m</sub>(t)/√L<sub>q</sub>
+        <br>
+        Y<sub>q</sub>(f) = ∑<sub>k=−∞</sub><sup>∞</sup>C<sub>q,k</sub>R<sub>q</sub>(f−kB)
+        <span class="explain">L<sub>q</sub> = ∑<sub>m</sub>S<sub>m,q</sub>；归一化只用于公平比较各组功率</span>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="card-head"><div><h3>本次仿真的二值开关矩阵 S</h3><p>行是 8 根天线，列是 4 个 VRF；1 表示该码相位接入</p></div><span class="tag">8 × 4</span></div>
+          <div id="switchMatrix" class="matrix" aria-label="开关矩阵"></div>
+          <div class="matrix-label">列归一化后形成 H̃ = S<sup>T</sup>H</div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>开关前：天线组复包络</h3><p>所选 q 支路中，被选天线信号的相干和</p></div><span class="tag">时域</span></div>
+          <div class="plot"><canvas id="preSwitchTimePlot"></canvas></div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>开关后：门控波形</h3><p>只有 c<sub>q</sub>(t)=1 的 25 ns 窗保留模拟信号</p></div><span class="tag orange">时域相乘</span></div>
+          <div class="plot"><canvas id="postSwitchTimePlot"></canvas></div>
+        </article>
+        <article class="card wide-card">
+          <div class="card-head"><div><h3>频谱搬移：原 10 MHz 频谱与模拟扩频结果</h3><p>理论谐波卷积绘制到 ±60 MHz；阴影内是 40 MS/s ADC 的第一奈奎斯特区</p></div><span class="tag violet">S(f) ∗ C(f)</span></div>
+          <div class="plot"><canvas id="spreadSpectrumPlot"></canvas></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="adc">
+      <div class="section-head">
+        <div class="step-no">04</div>
+        <div>
+          <h2>模拟合路后，只留下一个 40 MS/s ADC 流</h2>
+          <p>四个门控支路在 RF 端直接相加。160 MS/s 仅是页面里的“模拟连续时间”近似；真正进入数字域的是每隔 4 点抽取一次的单一复数序列。</p>
+        </div>
+      </div>
+      <div class="formula">
+        y<sub>analog</sub>(t) = ∑<sub>q=0</sub><sup>3</sup>y<sub>q</sub>(t)，
+        y[n] = y<sub>analog</sub>(n/40 MHz) + w[n]
+        <br>
+        Y<sub>s</sub>(f) = NB∑<sub>p=−∞</sub><sup>∞</sup>Y<sub>analog</sub>(f−pNB)
+        <span class="explain">ADC 以 40 MHz 为周期延拓频谱，带外谐波折回 [−20,20) MHz</span>
+      </div>
+      <div class="grid-2">
+        <article class="card">
+          <div class="card-head"><div><h3>RF 合路的模拟时域波形</h3><p>颜色点标出实际 ADC 取样；连续线使用 160 MS/s 数值近似</p></div><span class="tag">1 条模拟链路</span></div>
+          <div class="plot"><canvas id="analogSumTimePlot"></canvas></div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>唯一的 ADC 离散 IQ 流</h3><p>相邻样本按 q = n mod 4 轮流来自四个码相位</p></div><span class="tag orange">40 MS/s</span></div>
+          <div class="plot"><canvas id="adcTimePlot"></canvas></div>
+        </article>
+        <article class="card wide-card">
+          <div class="card-head"><div><h3>采样后的频谱折叠</h3><p>最终数字频谱只存在于 ±20 MHz；四个 B 宽区域是开关码谐波，不是四个物理 RF 链</p></div><span class="tag violet">Nyquist = ±20 MHz</span></div>
+          <div class="plot"><canvas id="adcSpectrumPlot"></canvas></div>
+        </article>
+      </div>
+      <div class="callout"><strong>关键澄清：</strong>“混叠”在普通接收机里常是失真；这里开关周期、占空比和 ADC 时钟同步设计，折叠后的样本仍保留 q = n mod 4 的确定标签，所以可逆。页面中的噪声只在这个唯一 ADC 流上添加一次。</div>
+    </section>
+
+    <section id="despread">
+      <div class="section-head">
+        <div class="step-no">05</div>
+        <div>
+          <h2>数字解扩其实就是解交织 + 4 倍抽取</h2>
+          <p>把单 ADC 流按余数类拆成四条：第 q 条只取索引 4n+q。每条从 40 MS/s 回到 10 MS/s，并成为一个虚拟 RF 链。</p>
+        </div>
+      </div>
+      <div class="formula">
+        z<sub>q</sub>[n] = <span class="accent">y[4n+q]</span>，q=0,1,2,3；
+        Z<sub>q</sub>[k] = e<sup>j2πkq/(4·64)</sup>∑<sub>u=0</sub><sup>3</sup>H̃<sub>q,u</sub>X<sub>u</sub>[k] + W<sub>q</sub>[k]
+        <span class="explain">指数项来自四个余数类相差 25 ns 的确定采样偏移，可并入等效信道</span>
+      </div>
+      <div class="grid-2">
+        <article class="card">
+          <div class="card-head"><div><h3>四条 VRF 的时域波形</h3><p>去交织后每条含 16 点 CP + 64 点有效符号</p></div><span class="tag">4 × 10 MS/s</span></div>
+          <div class="plot"><canvas id="vrfTimePlot"></canvas></div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>四条 VRF 的频谱</h3><p>抽取后都回到原 10 MHz 基带，但仍是四个用户的空间混合</p></div><span class="tag violet">数字解扩</span></div>
+          <div class="plot"><canvas id="vrfSpectrumPlot"></canvas></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="recover">
+      <div class="section-head">
+        <div class="step-no">06</div>
+        <div>
+          <h2>每个子载波做 4×4 MIMO 均衡，恢复四路数据</h2>
+          <p>解扩只创建四条可独立处理的 VRF，尚未消除用户间空间干扰。最后对每个有源子载波求解等效信道，本文页用已知信道的 ZF 展示机制上限。</p>
+        </div>
+      </div>
+      <div class="formula">
+        <b>Z</b>[k] = <b>H</b><sub>eff</sub>[k]<b>X</b>[k] + <b>W</b>[k]，
+        X̂[k] = (<b>H</b><sub>eff</sub><sup>H</sup><b>H</b><sub>eff</sub>)<sup>−1</sup><b>H</b><sub>eff</sub><sup>H</sup><b>Z</b>[k]
+        <span class="explain">方阵满秩时等价于 H<sub>eff</sub><sup>−1</sup>Z；实际系统用训练序列估计 H<sub>eff</sub></span>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="card-head"><div><h3>均衡前 VRF 0 星座</h3><p>四个用户和信道相位叠在一起，不能直接判决</p></div><span class="tag orange">空间混合</span></div>
+          <div class="plot"><canvas id="beforeConstellationPlot"></canvas></div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>ZF 后四用户星座</h3><p>空心十字是理想 16-QAM 点，彩色点是恢复结果</p></div><span class="tag">恢复数据</span></div>
+          <div class="plot"><canvas id="afterConstellationPlot"></canvas></div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h3>原始与恢复时域波形</h3><p>用户 0：原始 x[n] 与 IFFT(X̂[k]) 对比</p></div><span class="tag violet">端到端</span></div>
+          <div class="plot"><canvas id="recoverTimePlot"></canvas></div>
+        </article>
+        <article class="card wide-card">
+          <div class="card-head"><div><h3>恢复后的四路 OFDM 频谱</h3><p>再次回到同一个 10 MHz 空口频带；空间流由 MIMO 维度而非频率区间区分</p></div><span class="tag">4 spatial streams</span></div>
+          <div class="plot"><canvas id="recoverSpectrumPlot"></canvas></div>
+          <div class="readout">
+            <div>平均 EVM<b id="evmValue">—</b></div>
+            <div>硬判决 BER<b id="berValue">—</b></div>
+            <div>等效信道条件数<b id="condValue">—</b></div>
+            <div>数字样本守恒<b>1×320 → 4×80</b></div>
+          </div>
+        </article>
+      </div>
+      <div class="callout"><strong>结论：</strong>模拟端用开关把“空间维”编进一个更宽的时间采样流；数字端按 4n+q 解交织恢复四个 VRF；最后仍需标准 MIMO 均衡剥离四个同频 OFDM 用户。单 RF 链并不等于单空间流。</div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">
+      本页为机制级、单 OFDM 符号仿真，不复刻论文的完整 WARPLab PHY、卷积编码、包检测和实测多径。
+      参数来源对应本地 PDF §4 Implementation 与 §5 Evaluations；刷新页面或修改种子即可复现实验。
+    </div>
+  </footer>
+  <noscript><div class="shell noscript">此页面需要 JavaScript 才能运行复数 OFDM 仿真和绘图。</div></noscript>
+
+  <script>
+  (() => {
+    "use strict";
+
+    const P = Object.freeze({
+      users: 4, antennas: 8, vrfs: 4,
+      nfft: 64, cp: 16, dataSc: 48, pilotSc: 4,
+      fsStream: 10e6, fsAdc: 40e6, fsAnalog: 160e6,
+      analogOS: 16, adcDecim: 4
+    });
+    const COLORS = ["#43d8d2", "#ffb45e", "#a98bff", "#ff719a"];
+    const PILOTS = new Set([-21,-7,7,21]);
+    let simulation = null;
+    let renderJobs = [];
+
+    const C = (re=0, im=0) => ({re, im});
+    const add = (a,b) => C(a.re+b.re, a.im+b.im);
+    const sub = (a,b) => C(a.re-b.re, a.im-b.im);
+    const mul = (a,b) => C(a.re*b.re-a.im*b.im, a.re*b.im+a.im*b.re);
+    const scale = (a,s) => C(a.re*s, a.im*s);
+    const conj = a => C(a.re,-a.im);
+    const abs2 = a => a.re*a.re+a.im*a.im;
+    const cloneVec = a => a.map(z => C(z.re,z.im));
+
+    function rngFactory(seed) {
+      let a = seed >>> 0;
+      return () => {
+        a |= 0; a = a + 0x6D2B79F5 | 0;
+        let t = Math.imul(a ^ a >>> 15, 1 | a);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+
+    function gaussian(rand) {
+      const u = Math.max(rand(), 1e-12);
+      return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*rand());
+    }
+
+    function fft(input, inverse=false) {
+      const n = input.length;
+      const a = cloneVec(input);
+      for (let i=1,j=0;i<n;i++) {
+        let bit=n>>1;
+        for (;j&bit;bit>>=1) j^=bit;
+        j^=bit;
+        if (i<j) [a[i],a[j]]=[a[j],a[i]];
+      }
+      for (let len=2;len<=n;len<<=1) {
+        const ang=(inverse?2:-2)*Math.PI/len;
+        const wlen=C(Math.cos(ang),Math.sin(ang));
+        for (let i=0;i<n;i+=len) {
+          let w=C(1,0);
+          for (let j=0;j<len/2;j++) {
+            const u=a[i+j], v=mul(a[i+j+len/2],w);
+            a[i+j]=add(u,v);
+            a[i+j+len/2]=sub(u,v);
+            w=mul(w,wlen);
+          }
+        }
+      }
+      if (inverse) for (let i=0;i<n;i++) a[i]=scale(a[i],1/n);
+      return a;
+    }
+
+    function fftShift(a) { const h=a.length>>1; return a.slice(h).concat(a.slice(0,h)); }
+    function ifftShift(a) { const h=a.length>>1; return a.slice(h).concat(a.slice(0,h)); }
+    function unitaryIFFTCentered(X) {
+      const n=X.length;
+      return fft(ifftShift(X),true).map(z=>scale(z,Math.sqrt(n)));
+    }
+    function unitaryFFTCentered(x) {
+      const n=x.length;
+      return fftShift(fft(x,false)).map(z=>scale(z,1/Math.sqrt(n)));
+    }
+
+    function oversampledIFFT(X, os) {
+      const n=X.length, nh=n*os, high=Array.from({length:nh},()=>C());
+      const start=(nh-n)/2;
+      for (let i=0;i<n;i++) high[start+i]=scale(X[i],Math.sqrt(os));
+      return unitaryIFFTCentered(high);
+    }
+
+    function qam16(rand) {
+      const levels=[-3,-1,3,1];
+      const bi=Math.floor(rand()*4), bq=Math.floor(rand()*4);
+      return {z:C(levels[bi]/Math.sqrt(10),levels[bq]/Math.sqrt(10)), bits:[bi>>1,bi&1,bq>>1,bq&1]};
+    }
+
+    function nearestQamBits(z) {
+      const gray = [
+        {v:-3/Math.sqrt(10),b:[0,0]}, {v:-1/Math.sqrt(10),b:[0,1]},
+        {v: 1/Math.sqrt(10),b:[1,1]}, {v: 3/Math.sqrt(10),b:[1,0]}
+      ];
+      const pick=x=>gray.reduce((a,b)=>Math.abs(x-b.v)<Math.abs(x-a.v)?b:a);
+      return pick(z.re).b.concat(pick(z.im).b);
+    }
+
+    function activeBin(k) { return k!==0 && Math.abs(k)<=26; }
+    function centeredIndex(k,n=64) { return k+n/2; }
+
+    function invertMatrix(A) {
+      const n=A.length;
+      const aug=A.map((row,i)=>row.map(z=>C(z.re,z.im)).concat(
+        Array.from({length:n},(_,j)=>C(i===j?1:0,0))
+      ));
+      for (let col=0;col<n;col++) {
+        let pivot=col;
+        for (let r=col+1;r<n;r++) if (abs2(aug[r][col])>abs2(aug[pivot][col])) pivot=r;
+        if (abs2(aug[pivot][col])<1e-15) throw new Error("等效信道接近奇异，请更换随机种子");
+        [aug[col],aug[pivot]]=[aug[pivot],aug[col]];
+        const d=aug[col][col], den=abs2(d);
+        const invD=C(d.re/den,-d.im/den);
+        aug[col]=aug[col].map(z=>mul(z,invD));
+        for (let r=0;r<n;r++) if (r!==col) {
+          const f=aug[r][col];
+          aug[r]=aug[r].map((z,j)=>sub(z,mul(f,aug[col][j])));
+        }
+      }
+      return aug.map(row=>row.slice(n));
+    }
+
+    function matVec(A,x) {
+      return A.map(row=>row.reduce((s,z,i)=>add(s,mul(z,x[i])),C()));
+    }
+
+    function conditionNumberApprox(A) {
+      const frob=Math.sqrt(A.flat().reduce((s,z)=>s+abs2(z),0));
+      const inv=invertMatrix(A);
+      const invFrob=Math.sqrt(inv.flat().reduce((s,z)=>s+abs2(z),0));
+      return frob*invFrob/A.length;
+    }
+
+    function babfCandidates(H,q) {
+      const unique=new Map();
+      const addMask=mask=>{
+        const count=mask.reduce((a,b)=>a+b,0);
+        if (count<2) return;
+        let coherent=C();
+        for (let m=0;m<P.antennas;m++) if(mask[m]) coherent=add(coherent,H[m][q]);
+        unique.set(mask.join(""),{mask,score:Math.sqrt(abs2(coherent)/count)});
+      };
+      for (let ref=0;ref<P.antennas;ref++) {
+        const phi=Math.atan2(H[ref][q].im,H[ref][q].re);
+        addMask(H.map(row=>Math.cos(Math.atan2(row[q].im,row[q].re)-phi)>=0?1:0));
+      }
+      const pairs=[];
+      for (let a=0;a<P.antennas;a++) for (let b=a+1;b<P.antennas;b++) {
+        const mask=Array(P.antennas).fill(0);mask[a]=mask[b]=1;
+        let coherent=add(H[a][q],H[b][q]);
+        pairs.push({mask,score:Math.sqrt(abs2(coherent)/2)});
+      }
+      pairs.sort((a,b)=>b.score-a.score).slice(0,8).forEach(v=>addMask(v.mask));
+      return [...unique.values()].sort((a,b)=>b.score-a.score).map(v=>v.mask);
+    }
+
+    function effectiveChannel(S,H) {
+      return Array.from({length:P.vrfs},(_,q)=>{
+        const count=S.reduce((sum,row)=>sum+row[q],0);
+        return Array.from({length:P.users},(_,u)=>{
+          let z=C();
+          for (let m=0;m<P.antennas;m++) if(S[m][q]) z=add(z,H[m][u]);
+          return scale(z,1/Math.sqrt(count));
+        });
+      });
+    }
+
+    function babfScore(S,H) {
+      try {
+        const A=effectiveChannel(S,H);
+        const cond=conditionNumberApprox(A);
+        const gain=A.reduce((sum,row,q)=>sum+Math.log1p(abs2(row[q])),0);
+        return Math.log(cond)-.12*gain;
+      } catch (_) {
+        return 1e12;
+      }
+    }
+
+    function chooseBabf(H) {
+      const candidates=Array.from({length:P.vrfs},(_,q)=>babfCandidates(H,q));
+      const phaseStart=Array.from({length:P.antennas},(_,m)=>candidates.map(c=>c[0][m]));
+      const pairStart=Array.from({length:P.antennas},(_,m)=>
+        Array.from({length:P.vrfs},(_,q)=>(m===2*q||m===2*q+1)?1:0)
+      );
+      let best=pairStart,bestScore=babfScore(best,H);
+      for (const start of [phaseStart,pairStart]) {
+        const current=start.map(row=>row.slice());
+        for (let pass=0;pass<4;pass++) {
+          let changed=false;
+          for (let q=0;q<P.vrfs;q++) {
+            let local=current.map(row=>row[q]),localScore=babfScore(current,H);
+            for (const mask of candidates[q]) {
+              const trial=current.map((row,m)=>row.map((v,j)=>j===q?mask[m]:v));
+              const score=babfScore(trial,H);
+              if (score+1e-10<localScore) {local=mask;localScore=score;}
+            }
+            if (local.some((v,m)=>v!==current[m][q])) {
+              for (let m=0;m<P.antennas;m++) current[m][q]=local[m];
+              changed=true;
+            }
+          }
+          if (!changed) break;
+        }
+        const score=babfScore(current,H);
+        if (score<bestScore) {best=current.map(row=>row.slice());bestScore=score;}
+      }
+      return best;
+    }
+
+    function spectrum(signal, fs, nfft=2048) {
+      const n=Math.min(signal.length,nfft);
+      const padded=Array.from({length:nfft},()=>C());
+      let winEnergy=0;
+      for (let i=0;i<n;i++) {
+        const w=n>1 ? .5-.5*Math.cos(2*Math.PI*i/(n-1)) : 1;
+        padded[i]=scale(signal[i],w);
+        winEnergy+=w*w;
+      }
+      const F=fftShift(fft(padded));
+      const power=F.map(z=>abs2(z)/Math.max(winEnergy,1e-12));
+      const max=Math.max(...power,1e-15);
+      return {
+        x:power.map((_,i)=>(i-nfft/2)*fs/nfft/1e6),
+        y:power.map(v=>10*Math.log10(Math.max(v/max,1e-12)))
+      };
+    }
+
+    function simulate(seed,snrDb) {
+      const rand=rngFactory(seed);
+      const X=[], txBits=[];
+      for (let u=0;u<P.users;u++) {
+        const grid=Array.from({length:P.nfft},()=>C());
+        const bitMap=Array.from({length:P.nfft},()=>null);
+        for (let k=-32;k<32;k++) {
+          if (!activeBin(k)) continue;
+          const idx=centeredIndex(k);
+          if (PILOTS.has(k)) {
+            grid[idx]=C(((u+k+64)&1)?-1:1,0);
+          } else {
+            const q=qam16(rand);
+            grid[idx]=q.z; bitMap[idx]=q.bits;
+          }
+        }
+        X.push(grid); txBits.push(bitMap);
+      }
+
+      const lowUseful=X.map(unitaryIFFTCentered);
+      const lowCp=lowUseful.map(x=>x.slice(-P.cp).concat(x));
+      const analogUseful=X.map(g=>oversampledIFFT(g,P.analogOS));
+      const cpA=P.cp*P.analogOS;
+      const analogTx=analogUseful.map(x=>x.slice(-cpA).concat(x));
+
+      const H=Array.from({length:P.antennas},()=>Array.from({length:P.users},()=>scale(C(gaussian(rand),gaussian(rand)),1/Math.sqrt(2))));
+      const S=chooseBabf(H);
+      const antenna=Array.from({length:P.antennas},(_,m)=>
+        Array.from({length:analogTx[0].length},(_,n)=>
+          H[m].reduce((s,h,u)=>add(s,mul(h,analogTx[u][n])),C())
+        )
+      );
+
+      const groupSizes=Array.from({length:4},(_,q)=>S.reduce((s,row)=>s+row[q],0));
+      const groupSignal=Array.from({length:4},(_,q)=>
+        Array.from({length:analogTx[0].length},(_,n)=>{
+          let z=C();
+          for (let m=0;m<P.antennas;m++) if (S[m][q]) z=add(z,antenna[m][n]);
+          return scale(z,1/Math.sqrt(groupSizes[q]));
+        })
+      );
+      const codes=Array.from({length:4},(_,q)=>
+        Array.from({length:analogTx[0].length},(_,n)=>Math.floor((n%P.analogOS)/(P.analogOS/4))===q?1:0)
+      );
+      const switched=groupSignal.map((sig,q)=>sig.map((z,n)=>scale(z,codes[q][n])));
+      const analogSum=Array.from({length:analogTx[0].length},(_,n)=>
+        switched.reduce((s,v)=>add(s,v[n]),C())
+      );
+
+      const adcClean=[];
+      for (let n=0;n<analogSum.length;n+=P.adcDecim) adcClean.push(analogSum[n]);
+      const sisoSignalPower=52/64;
+      const noisePower=sisoSignalPower/Math.pow(10,snrDb/10);
+      const sigma=Math.sqrt(noisePower/2);
+      const adc=adcClean.map(z=>add(z,C(sigma*gaussian(rand),sigma*gaussian(rand))));
+
+      const vrf=Array.from({length:4},(_,q)=>adc.filter((_,n)=>n%4===q));
+      const vrfUseful=vrf.map(v=>v.slice(P.cp,P.cp+P.nfft));
+      const Z=vrfUseful.map(unitaryFFTCentered);
+
+      const A=effectiveChannel(S,H);
+      const Xhat=Array.from({length:4},()=>Array.from({length:64},()=>C()));
+      const conditions=[];
+      for (let k=-32;k<32;k++) {
+        const idx=centeredIndex(k);
+        const Heff=Array.from({length:4},(_,q)=>{
+          const phase=C(Math.cos(2*Math.PI*k*q/(4*64)),Math.sin(2*Math.PI*k*q/(4*64)));
+          return A[q].map(z=>mul(phase,z));
+        });
+        if (activeBin(k)) {
+          const inv=invertMatrix(Heff);
+          const xh=matVec(inv,Z.map(row=>row[idx]));
+          for (let u=0;u<4;u++) Xhat[u][idx]=xh[u];
+          conditions.push(conditionNumberApprox(Heff));
+        }
+      }
+      const recoveredUseful=Xhat.map(unitaryIFFTCentered);
+      const recoveredCp=recoveredUseful.map(x=>x.slice(-P.cp).concat(x));
+
+      let err=0,ref=0,bitErr=0,bitTotal=0;
+      for (let u=0;u<4;u++) for (let k=-32;k<32;k++) {
+        if (!activeBin(k) || PILOTS.has(k)) continue;
+        const idx=centeredIndex(k);
+        err+=abs2(sub(Xhat[u][idx],X[u][idx])); ref+=abs2(X[u][idx]);
+        const bh=nearestQamBits(Xhat[u][idx]), bt=txBits[u][idx];
+        for (let b=0;b<4;b++) { bitErr+=bh[b]!==bt[b]?1:0; bitTotal++; }
+      }
+      return {
+        seed,snrDb,X,txBits,lowUseful,lowCp,analogTx,H,S,antenna,groupSizes,
+        groupSignal,codes,switched,analogSum,adcClean,adc,vrf,vrfUseful,Z,A,
+        Xhat,recoveredUseful,recoveredCp,
+        evm:Math.sqrt(err/ref)*100, ber:bitErr/bitTotal,
+        cond:conditions.reduce((a,b)=>a+b,0)/conditions.length
+      };
+    }
+
+    function setupCanvas(canvas) {
+      const dpr=Math.min(devicePixelRatio||1,2);
+      const rect=canvas.getBoundingClientRect();
+      const w=Math.max(320,rect.width), h=280;
+      canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
+      const ctx=canvas.getContext("2d");
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      return {ctx,w,h};
+    }
+
+    function niceTicks(min,max,count=5) {
+      if (max===min) return [min];
+      const raw=(max-min)/count, p=Math.pow(10,Math.floor(Math.log10(raw)));
+      const q=raw/p;
+      const step=(q>=5?5:q>=2?2:1)*p;
+      const out=[];
+      for (let v=Math.ceil(min/step)*step;v<=max+step*1e-8;v+=step) out.push(v);
+      return out;
+    }
+
+    function lineChart(id,series,opt={}) {
+      const canvas=document.getElementById(id);
+      const job=()=>{
+        const {ctx,w,h}=setupCanvas(canvas);
+        const m={l:54,r:16,t:18,b:42}, pw=w-m.l-m.r, ph=h-m.t-m.b;
+        const xs=series.flatMap(s=>s.x), ys=series.flatMap(s=>s.y.filter(Number.isFinite));
+        let xmin=opt.xmin??Math.min(...xs), xmax=opt.xmax??Math.max(...xs);
+        let ymin=opt.ymin??Math.min(...ys), ymax=opt.ymax??Math.max(...ys);
+        if (ymax===ymin) {ymax+=1;ymin-=1;}
+        if (opt.padY!==false && opt.ymin==null && opt.ymax==null) {const p=(ymax-ymin)*.09;ymin-=p;ymax+=p;}
+        const X=x=>m.l+(x-xmin)/(xmax-xmin)*pw;
+        const Y=y=>m.t+(ymax-y)/(ymax-ymin)*ph;
+        ctx.clearRect(0,0,w,h);
+        ctx.fillStyle="#0a1626"; ctx.fillRect(m.l,m.t,pw,ph);
+        if (opt.bands) for (const b of opt.bands) {
+          ctx.fillStyle=b.color; ctx.fillRect(X(b.x0),m.t,X(b.x1)-X(b.x0),ph);
+        }
+        ctx.strokeStyle="#20344f"; ctx.lineWidth=1; ctx.fillStyle="#7f93ad"; ctx.font="11px Inter, sans-serif";
+        ctx.textAlign="center"; ctx.textBaseline="top";
+        for (const t of niceTicks(xmin,xmax,6)) {
+          const x=X(t); ctx.beginPath();ctx.moveTo(x,m.t);ctx.lineTo(x,m.t+ph);ctx.stroke();
+          ctx.fillText(formatTick(t),x,m.t+ph+8);
+        }
+        ctx.textAlign="right";ctx.textBaseline="middle";
+        for (const t of niceTicks(ymin,ymax,5)) {
+          const y=Y(t);ctx.beginPath();ctx.moveTo(m.l,y);ctx.lineTo(m.l+pw,y);ctx.stroke();
+          ctx.fillText(formatTick(t),m.l-8,y);
+        }
+        ctx.save();ctx.beginPath();ctx.rect(m.l,m.t,pw,ph);ctx.clip();
+        for (const s of series) {
+          ctx.strokeStyle=s.color||"#43d8d2";ctx.fillStyle=s.color||"#43d8d2";ctx.lineWidth=s.width||1.5;
+          ctx.setLineDash(s.dash||[]);
+          ctx.beginPath();
+          for (let i=0;i<s.x.length;i++) {
+            const x=X(s.x[i]),y=Y(s.y[i]);
+            if (i===0||!Number.isFinite(s.y[i-1])) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+          }
+          ctx.stroke();
+          if (s.points) for (let i=0;i<s.x.length;i++) {
+            ctx.beginPath();ctx.arc(X(s.x[i]),Y(s.y[i]),s.radius||2.6,0,2*Math.PI);ctx.fill();
+          }
+          if (s.stem) for (let i=0;i<s.x.length;i++) {
+            ctx.beginPath();ctx.moveTo(X(s.x[i]),Y(Math.max(ymin,0)));ctx.lineTo(X(s.x[i]),Y(s.y[i]));ctx.stroke();
+            ctx.beginPath();ctx.arc(X(s.x[i]),Y(s.y[i]),3,0,2*Math.PI);ctx.fill();
+          }
+        }
+        ctx.restore();ctx.setLineDash([]);
+        ctx.fillStyle="#8fa3bd";ctx.textAlign="center";ctx.textBaseline="bottom";ctx.font="11px Inter, sans-serif";
+        ctx.fillText(opt.xlabel||"",m.l+pw/2,h-2);
+        ctx.save();ctx.translate(13,m.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillText(opt.ylabel||"",0,0);ctx.restore();
+        drawLegend(ctx,series,m.l+8,m.t+7,w-m.r-5);
+      };
+      renderJobs.push(job); job();
+    }
+
+    function drawLegend(ctx,series,x,y,right) {
+      const entries=series.filter(s=>s.label);
+      ctx.font="11px Inter, sans-serif";ctx.textAlign="left";ctx.textBaseline="middle";
+      let cx=x;
+      for (const s of entries) {
+        const width=ctx.measureText(s.label).width+26;
+        if (cx+width>right) {cx=x;y+=17;}
+        ctx.strokeStyle=s.color;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,y);ctx.lineTo(cx+13,y);ctx.stroke();
+        ctx.fillStyle="#a7b7ca";ctx.fillText(s.label,cx+17,y);cx+=width;
+      }
+    }
+
+    function formatTick(v) {
+      if (Math.abs(v)>=1000) return v.toExponential(1);
+      if (Math.abs(v)<.01 && v!==0) return v.toExponential(1);
+      return Number(v.toFixed(Math.abs(v)<2?2:1)).toString();
+    }
+
+    function scatterChart(id,series,opt={}) {
+      const canvas=document.getElementById(id);
+      const job=()=>{
+        const {ctx,w,h}=setupCanvas(canvas), m={l:45,r:16,t:18,b:36};
+        const size=Math.min(w-m.l-m.r,h-m.t-m.b), left=m.l+(w-m.l-m.r-size)/2, top=m.t;
+        const lim=opt.lim||2.5, X=x=>left+(x+lim)/(2*lim)*size, Y=y=>top+(lim-y)/(2*lim)*size;
+        ctx.clearRect(0,0,w,h);ctx.fillStyle="#0a1626";ctx.fillRect(left,top,size,size);
+        ctx.strokeStyle="#20344f";ctx.fillStyle="#7f93ad";ctx.font="10px Inter";
+        for (let t=-2;t<=2;t++) {
+          ctx.beginPath();ctx.moveTo(X(t),top);ctx.lineTo(X(t),top+size);ctx.stroke();
+          ctx.beginPath();ctx.moveTo(left,Y(t));ctx.lineTo(left+size,Y(t));ctx.stroke();
+        }
+        ctx.strokeStyle="#526780";ctx.beginPath();ctx.moveTo(X(0),top);ctx.lineTo(X(0),top+size);ctx.moveTo(left,Y(0));ctx.lineTo(left+size,Y(0));ctx.stroke();
+        ctx.save();ctx.beginPath();ctx.rect(left,top,size,size);ctx.clip();
+        if (opt.reference) {
+          ctx.strokeStyle="rgba(230,240,250,.55)";ctx.lineWidth=1.2;
+          for (const z of opt.reference) {
+            const x=X(z.re),y=Y(z.im),r=4;ctx.beginPath();ctx.moveTo(x-r,y);ctx.lineTo(x+r,y);ctx.moveTo(x,y-r);ctx.lineTo(x,y+r);ctx.stroke();
+          }
+        }
+        for (const s of series) {
+          ctx.fillStyle=s.color;
+          for (const z of s.data) {ctx.globalAlpha=s.alpha||.78;ctx.beginPath();ctx.arc(X(z.re),Y(z.im),s.radius||2.8,0,2*Math.PI);ctx.fill();}
+        }
+        ctx.globalAlpha=1;ctx.restore();drawLegend(ctx,series.map(s=>({...s,x:[],y:[]})),left+7,top+8,left+size-5);
+        ctx.fillStyle="#8fa3bd";ctx.textAlign="center";ctx.font="11px Inter";ctx.fillText("In-phase",left+size/2,h-4);
+        ctx.save();ctx.translate(12,top+size/2);ctx.rotate(-Math.PI/2);ctx.fillText("Quadrature",0,0);ctx.restore();
+      };
+      renderJobs.push(job);job();
+    }
+
+    function gridChart(id,sim) {
+      const canvas=document.getElementById(id);
+      const job=()=>{
+        const {ctx,w,h}=setupCanvas(canvas), m={l:48,r:14,t:18,b:38};
+        const gh=112, cell=(w-m.l-m.r)/64;
+        ctx.clearRect(0,0,w,h);ctx.fillStyle="#0a1626";ctx.fillRect(m.l,m.t,w-m.l-m.r,gh);
+        for (let u=0;u<4;u++) for (let i=0;i<64;i++) {
+          const k=i-32, active=activeBin(k), pilot=PILOTS.has(k);
+          ctx.fillStyle=!active?"#132239":pilot?"#ffb45e":COLORS[u];
+          ctx.globalAlpha=!active?.65:pilot?.9:.75;
+          ctx.fillRect(m.l+i*cell,m.t+u*gh/4,Math.max(1,cell-.4),gh/4-1);
+        }
+        ctx.globalAlpha=1;ctx.fillStyle="#8fa3bd";ctx.font="11px Inter";ctx.textAlign="right";
+        for (let u=0;u<4;u++) ctx.fillText("U"+u,m.l-8,m.t+(u+.65)*gh/4);
+        ctx.textAlign="center";for (const k of [-32,-26,-21,-7,0,7,21,26,31]) ctx.fillText(k,m.l+(k+32+.5)*cell,m.t+gh+16);
+        ctx.fillText("中心化子载波索引 k",m.l+(w-m.l-m.r)/2,m.t+gh+34);
+        const pts=[];
+        for (let u=0;u<4;u++) for (let i=0;i<64;i++) if (activeBin(i-32)&&!PILOTS.has(i-32)) pts.push({z:sim.X[u][i],color:COLORS[u]});
+        const cx=w*.5, cy=220, span=Math.min(w*.72,210), sc=span/4.2;
+        ctx.strokeStyle="#20344f";ctx.beginPath();ctx.moveTo(cx-span/2,cy);ctx.lineTo(cx+span/2,cy);ctx.moveTo(cx,cy-span/2);ctx.lineTo(cx,cy+span/2);ctx.stroke();
+        for (const p of pts) {ctx.fillStyle=p.color;ctx.globalAlpha=.65;ctx.beginPath();ctx.arc(cx+p.z.re*sc,cy-p.z.im*sc,2.2,0,2*Math.PI);ctx.fill();}
+        ctx.globalAlpha=1;
+      };
+      renderJobs.push(job);job();
+    }
+
+    function render(sim) {
+      renderJobs=[];
+      const us=x=>x*1e6;
+      const time=(n,fs,start=0)=>Array.from({length:n},(_,i)=>us((i+start)/fs));
+      const selected=Number(document.getElementById("phaseSelect").value);
+
+      gridChart("gridPlot",sim);
+      const tLow=time(sim.lowCp[0].length,P.fsStream,-P.cp);
+      lineChart("ofdmTimePlot",[
+        {x:tLow,y:sim.lowCp[0].map(z=>z.re),color:COLORS[0],label:"I"},
+        {x:tLow,y:sim.lowCp[0].map(z=>z.im),color:"#62a9ff",label:"Q",dash:[5,3]}
+      ],{xlabel:"相对有效符号起点时间 (μs)",ylabel:"归一化幅度",bands:[{x0:-1.6,x1:0,color:"rgba(255,180,94,.09)"}]});
+
+      const ofdmSpec=sim.lowUseful.map(x=>spectrum(x,P.fsStream));
+      lineChart("ofdmSpectrumPlot",ofdmSpec.map((s,u)=>({x:s.x,y:s.y,color:COLORS[u],label:"用户 "+u})),
+        {xmin:-6,xmax:6,ymin:-65,ymax:3,xlabel:"基带频率 (MHz)",ylabel:"归一化 PSD (dB)"});
+
+      const codeN=48, codeT=time(codeN,P.fsAnalog);
+      const codeSeries=Array.from({length:4},(_,q)=>({
+        x:codeT,y:sim.codes[q].slice(0,codeN).map(v=>v+q*1.25),color:COLORS[q],label:"c"+q,width:q===selected?2.7:1.3
+      }));
+      lineChart("codeTimePlot",codeSeries,{xmin:0,xmax:.3,ymin:-.2,ymax:4.8,xlabel:"时间 (μs)",ylabel:"码值 + 支路偏置",padY:false});
+
+      const ks=Array.from({length:17},(_,i)=>i-8);
+      const sinc=x=>Math.abs(x)<1e-12?1:Math.sin(Math.PI*x)/(Math.PI*x);
+      lineChart("codeSpectrumPlot",[{
+        x:ks.map(k=>10*k),y:ks.map(k=>Math.abs(sinc(k/4))/4),color:COLORS[selected],label:"|C"+selected+",k|",stem:true
+      }],{xmin:-82,xmax:82,ymin:0,ymax:.29,xlabel:"谐波频率 kB (MHz)",ylabel:"|Cₖ|",padY:false});
+
+      const matrix=document.getElementById("switchMatrix");matrix.innerHTML="";
+      sim.S.flat().forEach(v=>{const s=document.createElement("span");s.textContent=v;s.className=v?"on":"";matrix.appendChild(s);});
+
+      const showA=176, tA=time(showA,P.fsAnalog);
+      lineChart("preSwitchTimePlot",[
+        {x:tA,y:sim.groupSignal[selected].slice(0,showA).map(z=>z.re),color:COLORS[selected],label:"Re{r_group(t)}"},
+        {x:tA,y:sim.groupSignal[selected].slice(0,showA).map(z=>z.im),color:"#62a9ff",label:"Im{r_group(t)}",dash:[4,3]}
+      ],{xmin:0,xmax:1.05,xlabel:"时间 (μs)",ylabel:"幅度"});
+      lineChart("postSwitchTimePlot",[
+        {x:tA,y:sim.switched[selected].slice(0,showA).map(z=>z.re),color:COLORS[selected],label:"Re{r(t)c"+selected+"(t)}"},
+        {x:tA,y:sim.codes[selected].slice(0,showA).map(v=>v*.65),color:"#73859c",label:"c"+selected+"(t)",dash:[3,3]}
+      ],{xmin:0,xmax:1.05,xlabel:"时间 (μs)",ylabel:"幅度"});
+
+      const spreadSpec=spectrum(sim.switched[selected].slice(P.cp*P.analogOS),P.fsAnalog,4096);
+      const originalSpec=spectrum(sim.analogTx[0].slice(P.cp*P.analogOS),P.fsAnalog,4096);
+      lineChart("spreadSpectrumPlot",[
+        {x:originalSpec.x,y:originalSpec.y,color:"#62748d",label:"开关前 10 MHz"},
+        {x:spreadSpec.x,y:spreadSpec.y,color:COLORS[selected],label:"开关后宽带谐波"}
+      ],{xmin:-60,xmax:60,ymin:-75,ymax:3,xlabel:"模拟基带频率 (MHz)",ylabel:"归一化 PSD (dB)",
+          bands:[{x0:-20,x1:20,color:"rgba(67,216,210,.045)"}]});
+
+      const sumShow=192, tSum=time(sumShow,P.fsAnalog);
+      const adcPointsX=[],adcPointsY=[];
+      for (let i=0;i<sumShow;i+=4) {adcPointsX.push(us(i/P.fsAnalog));adcPointsY.push(sim.analogSum[i].re);}
+      lineChart("analogSumTimePlot",[
+        {x:tSum,y:sim.analogSum.slice(0,sumShow).map(z=>z.re),color:"#62a9ff",label:"Re{y_analog(t)}"},
+        {x:adcPointsX,y:adcPointsY,color:"#ffb45e",label:"ADC 样本",points:true,radius:2.8,width:.4}
+      ],{xmin:0,xmax:1.18,xlabel:"时间 (μs)",ylabel:"幅度"});
+
+      const adcShow=72,tAdc=time(adcShow,P.fsAdc);
+      const adcSeries=[{x:tAdc,y:sim.adc.slice(0,adcShow).map(z=>z.re),color:"#647992",label:"单 ADC 流",width:1}];
+      for (let q=0;q<4;q++) {
+        const xx=[],yy=[];for(let n=q;n<adcShow;n+=4){xx.push(us(n/P.fsAdc));yy.push(sim.adc[n].re);}
+        adcSeries.push({x:xx,y:yy,color:COLORS[q],label:"n mod 4 = "+q,points:true,radius:3,width:0});
+      }
+      lineChart("adcTimePlot",adcSeries,{xmin:0,xmax:1.78,xlabel:"ADC 时间 (μs)",ylabel:"Re{y[n]}"});
+      const adcSpec=spectrum(sim.adc.slice(P.cp*4),P.fsAdc,2048);
+      lineChart("adcSpectrumPlot",[{x:adcSpec.x,y:adcSpec.y,color:"#43d8d2",label:"唯一 ADC 输出 Y_s(f)"}],
+        {xmin:-20,xmax:20,ymin:-65,ymax:3,xlabel:"离散时间频率 (MHz)",ylabel:"归一化 PSD (dB)",
+        bands:[
+          {x0:-20,x1:-10,color:"rgba(98,169,255,.045)"},{x0:-10,x1:0,color:"rgba(67,216,210,.045)"},
+          {x0:0,x1:10,color:"rgba(169,139,255,.045)"},{x0:10,x1:20,color:"rgba(255,113,154,.045)"}
+        ]});
+
+      const tV=time(P.nfft+P.cp,P.fsStream,-P.cp);
+      lineChart("vrfTimePlot",sim.vrf.map((v,q)=>({x:tV,y:v.slice(0,80).map(z=>z.re),color:COLORS[q],label:"VRF "+q})),
+        {xlabel:"相对有效符号起点时间 (μs)",ylabel:"Re{z_q[n]}",bands:[{x0:-1.6,x1:0,color:"rgba(255,180,94,.07)"}]});
+      const vrfSpecs=sim.vrfUseful.map(v=>spectrum(v,P.fsStream));
+      lineChart("vrfSpectrumPlot",vrfSpecs.map((s,q)=>({x:s.x,y:s.y,color:COLORS[q],label:"VRF "+q})),
+        {xmin:-5,xmax:5,ymin:-65,ymax:3,xlabel:"基带频率 (MHz)",ylabel:"归一化 PSD (dB)"});
+
+      const before=[];
+      for (let k=-26;k<=26;k++) if(k!==0) before.push(sim.Z[0][centeredIndex(k)]);
+      scatterChart("beforeConstellationPlot",[{data:before,color:"#ffb45e",label:"Z₀[k]",radius:2.8}],{lim:5});
+      const ref=[];for(const i of [-3,-1,1,3])for(const q of [-3,-1,1,3])ref.push(C(i/Math.sqrt(10),q/Math.sqrt(10)));
+      const after=Array.from({length:4},(_,u)=>{
+        const data=[];for(let k=-26;k<=26;k++)if(k!==0&&!PILOTS.has(k))data.push(sim.Xhat[u][centeredIndex(k)]);
+        return {data,color:COLORS[u],label:"用户 "+u,radius:2.4,alpha:.72};
+      });
+      scatterChart("afterConstellationPlot",after,{lim:1.65,reference:ref});
+
+      const tRec=time(64,P.fsStream);
+      lineChart("recoverTimePlot",[
+        {x:tRec,y:sim.lowUseful[0].map(z=>z.re),color:"#6c8098",label:"原始用户 0"},
+        {x:tRec,y:sim.recoveredUseful[0].map(z=>z.re),color:COLORS[0],label:"恢复用户 0",dash:[5,3]}
+      ],{xlabel:"有效符号时间 (μs)",ylabel:"Re{x[n]}"});
+      const recSpecs=sim.recoveredUseful.map(v=>spectrum(v,P.fsStream));
+      lineChart("recoverSpectrumPlot",recSpecs.map((s,u)=>({x:s.x,y:s.y,color:COLORS[u],label:"恢复用户 "+u})),
+        {xmin:-5,xmax:5,ymin:-65,ymax:3,xlabel:"基带频率 (MHz)",ylabel:"归一化 PSD (dB)"});
+
+      document.getElementById("evmValue").textContent=sim.evm.toFixed(2)+" %";
+      document.getElementById("berValue").textContent=sim.ber===0?"0 / "+(4*48*4):sim.ber.toExponential(2);
+      document.getElementById("condValue").textContent=sim.cond.toFixed(2);
+    }
+
+    function run() {
+      const status=document.getElementById("status");
+      status.textContent="◌ 正在计算…";status.style.color="#ffb45e";
+      requestAnimationFrame(()=>{
+        try {
+          const seed=Math.max(1,Number(document.getElementById("seedInput").value)||2026);
+          const snr=Number(document.getElementById("snrInput").value);
+          simulation=simulate(seed,snr);
+          render(simulation);
+          document.getElementById("heroSnr").textContent=snr+" dB SISO";
+          status.textContent="● 仿真完成";status.style.color="#67dfa4";
+        } catch(err) {
+          console.error(err);status.textContent="仿真失败："+err.message;status.style.color="#ff6f78";
+        }
+      });
+    }
+
+    document.getElementById("snrInput").addEventListener("input",e=>{
+      document.getElementById("snrLabel").textContent=e.target.value+" dB";
+    });
+    document.getElementById("runButton").addEventListener("click",run);
+    document.getElementById("phaseSelect").addEventListener("change",()=>simulation&&render(simulation));
+    let resizeTimer;
+    window.addEventListener("resize",()=>{
+      clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>renderJobs.forEach(job=>job()),120);
+    });
+    run();
+  })();
+  </script>
+</body>
+</html>
