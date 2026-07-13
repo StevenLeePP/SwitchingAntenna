@@ -18,7 +18,8 @@ assert(isequal(size(sim.channel), [cfg.nRxChannels nLayers]), ...
     'type1:OfflineChannel', 'sim.channel must be nRxChannels-by-nLayers.');
 assert(numel(sim.userCfoHz) == nLayers && ...
     numel(sim.userTimingSamples) == nLayers && ...
-    numel(sim.userPowerDb) == nLayers, ...
+    numel(sim.userPowerDb) == nLayers && ...
+    numel(sim.userPhaseNoiseStdRadPerSample) == nLayers, ...
     'type1:OfflineUsers', 'Per-user impairment vectors must have nLayers elements.');
 assert(sim.switchOversample == 4, ...
     'type1:OfflineSwitch', 'The current four-phase model requires 4x oversampling.');
@@ -31,10 +32,18 @@ for layer = 1:nLayers
     x = tx(:, layer) * 10^(sim.userPowerDb(layer) / 20);
     x = fractional_delay(x, sim.userTimingSamples(layer));
     frequencyHz = sim.commonCfoHz + sim.userCfoHz(layer);
-    impairedTx(:, layer) = x .* exp(1j * 2*pi * frequencyHz * n / cfg.txSampleRate);
+    phaseNoise = wiener_phase_noise(nSamples, ...
+        sim.userPhaseNoiseStdRadPerSample(layer), stream);
+    impairedTx(:, layer) = x .* exp(1j * ( ...
+        2*pi * frequencyHz * n / cfg.txSampleRate + phaseNoise));
 end
 
-physicalRx30 = impairedTx * sim.channel.';
+if sim.channelModel=="flat"
+    physicalRx30 = impairedTx * sim.channel.';
+    channelModel = struct('profile','deterministic flat','matrix',sim.channel);
+else
+    [physicalRx30,channelModel] = type1_make_tdl_a_channel(impairedTx,cfg,sim.tdl,stream);
+end
 signalPower = mean(abs(physicalRx30).^2, 'all');
 noiseVariance = signalPower / 10^(sim.snrDb / 10);
 noise = sqrt(noiseVariance / 2) .* ( ...
@@ -51,26 +60,48 @@ if sim.useSwitchEmulation
     for rx = 1:cfg.nRxChannels
         raw122(:, rx) = resample(rxWindow30(:, rx), sim.switchOversample, 1);
     end
-    [stitched122, virtualRx30] = type1_digital_switch(raw122);
+    [stitched122, virtualRx30, switchMeta] = ...
+        type1_apply_switch_impairments(raw122, sim.switch, stream);
 else
     raw122 = complex(zeros(0, cfg.nRxChannels));
     stitched122 = complex(zeros(0, 1));
     virtualRx30 = rxWindow30;
+    switchMeta = struct('leakageAmplitude', 0, 'leakageMatrix', eye(4), ...
+        'settlingBetaMean', 1, 'settlingBetaStd', 0, 'settlingRiseNs', 0, ...
+        'transitionJitterStdPs', 0, 'isolationDb', Inf);
 end
 
 link = struct('virtualRx30', single(virtualRx30), ...
     'physicalRx30', single(physicalRx30), 'raw122', single(raw122), ...
     'stitched122', single(stitched122), 'noiseVariance', noiseVariance, ...
-    'simulatedChannel', sim.channel, 'impairedTx', single(impairedTx));
+    'simulatedChannel', channelModel, 'impairedTx', single(impairedTx), ...
+    'userCfoHz', sim.userCfoHz, 'userTimingSamples', sim.userTimingSamples, ...
+    'userPowerDb', sim.userPowerDb, ...
+    'userPhaseNoiseStdRadPerSample', sim.userPhaseNoiseStdRadPerSample, ...
+    'switchMeta', switchMeta);
 end
 
 function y = fractional_delay(x, delaySamples)
-% Positive delay means y[n]=x[n-delay].  Interpolation is intentionally
-% explicit: it is a controlled research impairment, not a hidden resampler.
+% Positive delay means y[n]=x[n-delay].  A zero-padded DFT shift is used
+% instead of linear interpolation, whose high-frequency roll-off would be
+% an unintended amplitude impairment in this 18.36-MHz occupied waveform.
 if delaySamples == 0
     y = x;
     return;
 end
-n = (0:numel(x)-1).';
-y = interp1(n, x, n-delaySamples, 'linear', 0);
+n = numel(x);
+nfft = 2^nextpow2(2*n);
+frequency = ifftshift((-floor(nfft/2):ceil(nfft/2)-1).' / nfft);
+yFull = ifft(fft(x, nfft) .* exp(-1j * 2*pi * frequency * delaySamples));
+y = yFull(1:n);
+end
+
+function phase = wiener_phase_noise(nSamples, incrementStd, stream)
+if incrementStd == 0
+    phase = zeros(nSamples, 1);
+    return;
+end
+assert(isfinite(incrementStd) && incrementStd >= 0, ...
+    'type1:OfflinePhaseNoise', 'Phase-noise increment standard deviation must be finite and nonnegative.');
+phase = cumsum(incrementStd * randn(stream, nSamples, 1));
 end

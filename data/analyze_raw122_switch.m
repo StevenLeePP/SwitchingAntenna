@@ -1,10 +1,16 @@
 %% Analyze saved 122.88 MS/s raw IQ through the digital antenna switch.
 %
-% Purpose:
+% Purpose (legacy ideal-switch inspection):
 %   Read the newest *_raw122_csingle_iq4.bin file, emulate the proposed
 %   switching/de-interleaving path with type1_digital_switch, then run:
 %     synchronization -> channel estimation -> channel compensation/RZF
 %     -> MIMO layer separation -> BER against the known reference bits.
+%
+% This script intentionally preserves the historic ideal type1_digital_switch
+% path for visual/consistency inspection.  It is not an OTA impairment
+% cross-validation path.  For a paired same-IQ ideal versus 25 dB/5 ns
+% experiment, run type1_analyze_raw122_switch_pair instead; that bridge
+% records PSS/PBCH validity and paired BER/EVM/cond(H) deltas.
 %
 % Run:
 %   cd('/home/bupt/tools/matlab_test/nr4x4_type1/data')

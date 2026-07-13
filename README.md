@@ -93,6 +93,42 @@ YunSDR、无需 `sudo`，并保存 `captures/type1_offline_baseline_*/` 结果�
 可选环境变量 `TYPE1_OFFLINE_OUTPUT_ROOT` 指定离线结果目录。若实时 sudo
 测试使默认 `captures/` 对普通用户不可写，脚本会自动回退到 MATLAB 的用户临时目录。
 
+### Phase 1 当前实现与模型边界
+
+`type1_offline_multiuser_config.m` 为四个 TX layer 分别注入 CFO、带限分数
+定时偏移、功率和独立 Wiener 相噪（参数单位为 rad/sample，尚未标定为某器件的
+dBc/Hz mask）。在固定场景 `[-350,125,620,-900] Hz` 的用户 CFO 下，现有仅估计
+共同 CFO 的接收机得到 BER `[0, 0.011, 0.272, 0.261]`；逐项消融表明差分 CFO 是
+主要来源，而 CP 内定时偏移、功率失衡和当前相噪强度本身未造成 BER。
+
+`type1_apply_switch_impairments.m` 以相干复泄漏矩阵表示隔离度，并以原始
+122.88 MS/s 一阶因果响应表示 10--90% 建立时间。其代数测试确认：理想参数逐样点
+等于原数字开关；0 dB 同相泄漏等于四路相干和；10 ns 时的 IIR 系数为 `0.832723`。
+
+必须避免一个不合理结论：**固定且周期性的建立时间或静态隔离度，在四相去交织后
+是频率选择性的多相 LTI MIMO 变换，不会天然产生 ICI。** 当前 Type-1 DM-RS 会估计
+这一等效 H，RZF 因而可吸收大部分静态失真。32 dB SNR 下，25 dB/5 ns、15 dB/0 ns
+和近乎无泄漏/10 ns 的受控测试均为零误码，仅 EVM/条件数改变。只有时变建立时间、
+switch/ADC 时钟抖动、未知/失配的泄漏矩阵或不充分导频，才可合理地成为残余 ICI 或
+BER 恶化来源；后续曲线必须明确区分“已知且被 DM-RS 校准”的静态损伤与这些残余项。
+
+`type1_run_phase1_sweeps.m` 已实现六条单变量（隔离度、建立时间、差分 CFO、
+独立相噪、过渡时钟抖动、功率失衡）和四张二维图（隔离度×建立时间、差分
+CFO×隔离度、功率×隔离度、定时×隔离度的条件数）。`smoke` 配置以每点一帧
+检查维度、复现性、失败标记和 PNG/MAT 输出；零误码点绘为 `1/Nbits` 上界，绝不
+伪造对数坐标零点。首个 smoke 结果位于
+`/home/bupt/type1_offline_captures/type1_phase1_smoke_20260714_000017/`：静态项和
+100 ps 抖动均仅达 `BER < 1.57e-6`，而满尺度差分 CFO 的汇总 BER 为约 `0.133`。
+这不是论文级统计；正式曲线必须使用 `TYPE1_SWEEP_PROFILE=pilot` 并提高
+`TYPE1_SWEEP_FRAMES`，每个零误码点报告对应置信上界。
+
+审议修正已开始落实：二维 heatmap 的 `smoke` 网格已提升为至少 `3×3`，`pilot`
+网格为至少 `5×5`。新增 `type1_analyze_user_cfo.m`：以相邻 slot DM-RS 的信道
+相位估计每 layer 残余 CFO，并把相位演化放进 RZF 的每 layer 信道列；它不是对
+混合 RX 样本作不成立的“逐用户去旋”。固定独立用户场景下，Layer 3 BER 已由
+约 `0.272` 降至 `9.3e-4`，Layer 4 由约 `0.261` 降至 0；这是后续损伤感知接收机
+应比较的基础 CFO 补偿基线。
+
 在 RX 服务器上编译并运行直接消费者：
 
 ```bash
@@ -246,6 +282,12 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `cmex-2026.07.13.2` -- 修复 frame-PHY 死噪声输出；CFO 改为帧内连续相位，虚拟 RX 固定时偏由 DM-RS H 吸收；新增固定可校准 switch-phase 映射，完成 OTA grid/H/EVM/bit 等价验证。
 - `cmex-2026.07.13.3` -- 新增 `RUN_COMMANDS.md`，集中记录 sudo 板卡运行的可视化 `type1_rx_live` 与无图形 `type1_rx_direct` TX/RX 完整命令及所用空口波形。
 - `cmex-2026.07.13.4` -- 新增硬件无关的 Phase-0 离线主干：reference→独立用户损伤接口→4×4 信道/AWGN→四相数字开关→完整 MATLAB PSS/DM-RS/RZF/BER；明确其为全数字受控开关仿真锚点。
+- `cmex-2026.07.13.5` -- 增加独立用户 CFO/带限定时/功率/Wiener 相噪与相干泄漏/因果建立时间模型、模型代数验证和通用离线实验入口；记录静态周期性开关损伤可被 DM-RS 估计的边界，禁止将其直接归因为 ICI。
+- `cmex-2026.07.14.1` -- 增加过渡时钟抖动与 Phase-1 六条单变量、四张双变量离线扫描器；零误码以统计上界绘图，静态可校准项与残余时变项分开报告，完成 smoke 级 MATLAB/PNG/MAT 验证。
+- `cmex-2026.07.14.2` -- 新增 `EXPERT_REVIEW.md`，集中说明远程/离线/OTA 运行命令、输出结构、已验证数据、统计限制、模型边界与核心代码职责，供专家审议；未提交。
+- `cmex-2026.07.14.3` -- 按专家审议将 smoke/pilot 二维网格提升至 3×3/5×5；新增基于跨 slot DM-RS 的逐用户残余 CFO 估计与时变 RZF 列相位补偿，建立可分离多用户 BER 基线；未提交。
+- `cmex-2026.07.14.4` -- 新增 3GPP TDL-A+Tx/Rx 指数相关离线信道与自由振荡 Wiener 相噪 dBc/Hz 锚定；OTA 25 dB/5 ns 交叉验证暴露现有 startup raw IQ 基线失效，已明确标记为未通过并要求重采有效 IQ；未提交。
+- `cmex-2026.07.14.5` -- 新增同一段 raw122 OTA IQ 的 ideal/25 dB+5 ns 成对注入桥接器：两支均经过 `type1_apply_switch_impairments` 和完整接收链，保存/打印 PSS、PBCH、BER、EVM、cond(H) 与配对差值；基线不合格时禁止将 OTA/离线增量称为交叉验证；未提交。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 

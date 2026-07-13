@@ -24,12 +24,28 @@ sim.channel = [1.00, 0.12+0.05i, 0.08-0.04i, 0.05+0.02i; ...
                0.06-0.03i, 0.95, 0.10+0.04i, 0.07-0.02i; ...
                0.09+0.02i, 0.05-0.03i, 1.05, 0.11+0.01i; ...
                0.04+0.01i, 0.08+0.03i, 0.06-0.04i, 0.98];
+sim.channelModel = lower(string(getenv('TYPE1_OFFLINE_CHANNEL_MODEL')));
+if strlength(sim.channelModel)==0, sim.channelModel="flat"; end
+assert(any(sim.channelModel==["flat" "tdl-a"]), ...
+    'type1:OfflineChannelModel','TYPE1_OFFLINE_CHANNEL_MODEL must be flat or tdl-a.');
+sim.tdl = struct('delaySpreadNs', 100, 'rxCorrelation', 0.5, ...
+    'txCorrelation', 0.5, 'dopplerHz', 0);
 
 % Phase-1 interfaces.  Defaults deliberately preserve the coherent OTA
 % anchor; each item is applied per TX layer before the MIMO channel.
 sim.userCfoHz = zeros(1, cfg.nLayers);
 sim.userTimingSamples = zeros(1, cfg.nLayers);
 sim.userPowerDb = zeros(1, cfg.nLayers);
+% Independent free-running oscillator model: phi[n]-phi[n-1] is Gaussian
+% with this standard deviation.  It is intentionally not labelled dBc/Hz
+% until a calibrated PLL/datasheet model is introduced.
+sim.userPhaseNoiseStdRadPerSample = zeros(1, cfg.nLayers);
+
+% Phase-1 core switch impairments.  isolationDb is a positive off-state
+% attenuation; Inf and zero rise time reproduce type1_digital_switch exactly.
+sim.switch = struct('isolationDb', Inf, 'settlingRiseNs', 0, ...
+    'leakagePhasesRad', zeros(4), 'rawSampleRateHz', cfg.rxSampleRate, ...
+    'transitionJitterStdPs', 0);
 end
 
 function value = env_positive(name, defaultValue)
