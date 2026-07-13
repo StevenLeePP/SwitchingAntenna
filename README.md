@@ -38,6 +38,12 @@ MATLAB 不再在每帧导出整段 IQ、重建 reference maps 或执行逐帧 FF
 它只在启动时 PSS 锁定 timestamp，并以 0.5 s 周期执行小窗口健康检查，
 把 CFO 与帧时间校正发送给 MEX。
 
+当前启动使用两阶段切换：先用 MATLAB 完成粗 PSS，再显式丢弃已进入软件
+ring 的冷启动数据；完成 maps 与窄窗 PSS 跟踪后，等待可完整解码的 PSS 对齐帧并
+再次 `directflush`，最后才启动 direct consumer。`startupDiscardBlocks`、
+`startupTimestampAudit` 会保存两次丢弃量、PSS/raw timestamp、ring sequence 和
+x=0 的 pending，便于区分软件 ring 历史与驱动 DMA 尚未入环的积压。
+
 > 当前 DM-RS/RZF/判决内核是 `type1_decode_frame_grid_mex`；它是 C MEX，
 > 由 direct consumer 以 MEX API 调用。换言之，重计算的 PHY 算法已是 C，
 > 但栅格仍以内部 MEX `mxArray` 传给该内核，并非完全手写的单一 C 函数。
@@ -66,6 +72,7 @@ MATLAB 不再在每帧导出整段 IQ、重建 reference maps 或执行逐帧 FF
 | `type1_validate_direct_phy_maps.m` | 持久 reference maps 与直接 frame-PHY MEX 的严格等价检查。 |
 | `type1_validate_native_ring_grid.m` | 同一 PSS timestamp 下 native-ring C grid 与 MATLAB grid/H/EVM/raw errors 对照。 |
 | `type1_compare_direct_stages.m` | MATLAB 标准路径、MATLAB+C PHY、native-ring+C PHY 的阶段消融对照。 |
+| `type1_plot_pending_compare.m` | 读取两个 `pendingTrace` 结果，离线绘制单阶段与两阶段启动队列曲线。 |
 | `type1_build_rx_mex.m` | 编译 YunSDR 接收 MEX。 |
 
 在 RX 服务器上编译并运行直接消费者：
@@ -106,6 +113,36 @@ MEX 以 **1 ms 原始 DMA block** 为队列单位；在本配置中每 block 为
 例如 `pending=10，峰值 517` 的意思是：试验结束时只剩 10 个 1 ms block
 （约 10 ms）等待处理；启动/同步阶段曾积压到 517 个 block（约 517 ms），
 但没有满队列、没有丢弃新 block，之后已消化到 10。它不是“处理时延 517 ms”。
+
+### 两阶段启动与初始数据丢弃
+
+当前两阶段策略的目标是让 PSS、reference-map 建立和 MATLAB 控制面工作不进入
+direct consumer 的待处理历史。`directflush` 只作用于**已经进入 MEX 软件 ring**
+的块；它不能清空 YunSDR/驱动内部尚未由后台 pthread 读出的 DMA 描述符。因此，
+`pending` 的 x=0 仍可能大于完整一帧所需的约 6--8 ms。这不是 `dropNew`，也不是
+软件 ring 未执行 flush；应通过 `startupTimestampAudit` 中“timestamp 对齐但
+producer sequence 提前”的证据识别该驱动侧积压。
+
+最新 10 s OTA 启动对比（`captures/type1_direct_20260713_171338`）为：
+
+| 项目 | 单阶段历史对比 | 当前两阶段 |
+|---|---:|---:|
+| x=0 pending | 约 482 block | 84 block |
+| 峰值 pending | 约 558 block | 约 103 block |
+| 稳态 pending | 未在 10 s 内追平，结束约 214 block | 约 20 block，最终 15 block |
+| `dropNew` | 0 | 0 |
+
+两阶段显著减少了 PSS 冷启动造成的软件历史；但该 10 s 结果是启动/队列验证，
+不是对下文 60 s BER 基线的替代。若验收要求 x=0 接近零，需要 vendor DMA 提供
+显式 flush，或把“PSS 锁定--驱动清队列--arm 新帧”的状态机放入 native 路径。
+
+## 实时星座图
+
+`type1_rx_live.m` 的星座图以低频率刷新固定数量的均衡后 data RE（默认最多
+500 点/层），并固定坐标轴为 `[-2, 2]`。即使虚拟 IQ 的信号存在性门限判为无信号，
+也不会清空或显示 `NO SIGNAL` 覆盖层：均衡后的噪声/切换过渡散点会照常绘制，
+QPSK 理想点始终显示。门限仅保留给 BER 与有效载荷覆盖率统计，相关快照的
+`outcome` 为 `no-signal-fast-gate`，不计作有效 `decoded` 样本。
 
 ## 最新 OTA 测试结果
 
@@ -176,3 +213,9 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 
 严格零误码验收还应要求四层 `status(6:9)` 全为 0；当前最新 60 s 测试不满足
 这一额外条件。
+
+## 提交变更记录
+
+后续每次代码修改与提交都必须在本节追加一行，格式为“版本 -- 主要变更”。
+
+- `cmex-2026.07.13.1` -- 新增两阶段启动的软件 ring 丢弃、startup timestamp/sequence 审计与 pending 离线对比；实时星座图改为始终绘制均衡结果并移除 `NO SIGNAL` 覆盖；更新启动队列实测说明。

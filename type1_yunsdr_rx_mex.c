@@ -57,6 +57,7 @@ typedef struct {
 
 static uint32_t scalar_u32(const mxArray *value, const char *name);
 static uint64_t scalar_u64(const mxArray *value, const char *name);
+static mxArray *make_u64(uint64_t value);
 
 /* ── Global device and ring-buffer state ── */
 static YUNSDR_DESCRIPTOR *g_device = NULL;
@@ -859,7 +860,55 @@ static void command_direct_start(int nlhs,mxArray **plhs,int nrhs,const mxArray 
     memset(g_direct_audit,0,sizeof(g_direct_audit));
     g_direct_audit_count=0; g_direct_audit_overflow=0;
     g_direct_run.running=1; g_direct_run.first_sequence=found; g_direct_run.first_timestamp=g_ring_timestamp[found%g_ring_blocks]; g_direct_run.next_frame_raw=wanted; g_direct_run.cfo_hz=(float)mxGetScalar(prhs[2]);
-    pthread_mutex_unlock(&g_ring_mutex); if(nlhs)plhs[0]=mxCreateLogicalScalar(true);
+    pthread_mutex_unlock(&g_ring_mutex);
+    if(nlhs)plhs[0]=mxCreateLogicalScalar(true);
+    if(nlhs>1)plhs[1]=make_u64(found);
+    if(nlhs>2)plhs[2]=make_u64(sequence);
+    if(nlhs>3)plhs[3]=make_u64(g_direct_run.first_timestamp);
+}
+
+/* Startup-only flush.  This deliberately discards pre-track history before
+ * directstart; it is reported separately from dropNew, which remains a
+ * runtime FIFO-overflow validity failure. */
+static void command_direct_flush(int nlhs, mxArray **plhs, int nrhs)
+{
+    uint64_t discarded;
+    if (nrhs != 1)
+        mexErrMsgIdAndTxt("nr4:mex:DirectFlushArgs", "directflush takes no arguments.");
+    if (g_ring_iq == NULL || !g_thread_created)
+        mexErrMsgIdAndTxt("nr4:mex:DirectFlush", "Start RX before directflush.");
+    pthread_mutex_lock(&g_ring_mutex);
+    if (g_direct_run.running) {
+        pthread_mutex_unlock(&g_ring_mutex);
+        mexErrMsgIdAndTxt("nr4:mex:DirectFlush", "directflush is allowed only before directstart.");
+    }
+    discarded = g_sequence - g_consumer_sequence;
+    g_consumer_sequence = g_sequence;
+    g_fifo_mode = 0;
+    pthread_mutex_unlock(&g_ring_mutex);
+    if (nlhs > 0) plhs[0] = mxCreateDoubleScalar((double)discarded);
+}
+
+/* Timestamp of the newest complete DMA block.  The two-stage MATLAB
+ * starter uses it to choose the newest PSS-aligned frame with enough active
+ * symbols already present, rather than reopening historical backlog. */
+static void command_direct_latest_timestamp(int nlhs, mxArray **plhs, int nrhs)
+{
+    uint64_t timestamp, sequence;
+    if (nrhs != 1)
+        mexErrMsgIdAndTxt("nr4:mex:DirectLatestArgs", "directlatesttimestamp takes no arguments.");
+    if (g_ring_iq == NULL || !g_thread_created)
+        mexErrMsgIdAndTxt("nr4:mex:DirectLatest", "Start RX before directlatesttimestamp.");
+    pthread_mutex_lock(&g_ring_mutex);
+    if (g_sequence == 0) {
+        pthread_mutex_unlock(&g_ring_mutex);
+        mexErrMsgIdAndTxt("nr4:mex:DirectLatest", "RX ring is empty.");
+    }
+    sequence = g_sequence;
+    timestamp = g_ring_timestamp[(sequence - 1u) % g_ring_blocks];
+    pthread_mutex_unlock(&g_ring_mutex);
+    if (nlhs > 0) plhs[0] = make_u64(timestamp);
+    if (nlhs > 1) plhs[1] = make_u64(sequence);
 }
 
 static void command_direct_poll(int nlhs,mxArray **plhs,int nrhs,const mxArray **prhs)
@@ -1690,6 +1739,10 @@ void mexFunction(int nlhs, mxArray **plhs, int nrhs, const mxArray **prhs)
         command_direct_phy_decode_grid(nlhs, plhs, nrhs, prhs);
     } else if (strcmp(command, "directgrid") == 0) {
         command_direct_grid(nlhs, plhs, nrhs, prhs);
+    } else if (strcmp(command, "directflush") == 0) {
+        command_direct_flush(nlhs, plhs, nrhs);
+    } else if (strcmp(command, "directlatesttimestamp") == 0) {
+        command_direct_latest_timestamp(nlhs, plhs, nrhs);
     } else if (strcmp(command, "directstart") == 0) {
         command_direct_start(nlhs, plhs, nrhs, prhs);
     } else if (strcmp(command, "directpoll") == 0) {

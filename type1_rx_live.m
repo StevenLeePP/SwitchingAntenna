@@ -263,26 +263,17 @@ while toc(runTimer) < durationSec && ...
     % Check signal presence on the already-copied virtual30 IQ every loop;
     % this adds no raw-122 copy and does not update the figure.
     virtualPresenceDb = virtual_signal_presence(virtualRF, cfg.txSampleRate);
-    if virtualPresenceDb < signalPresenceThresholdDb
+    signalPresent = virtualPresenceDb >= signalPresenceThresholdDb;
+    if ~signalPresent
         virtualAbsenceCount = virtualAbsenceCount + 1;
         if virtualAbsenceCount >= cfg.fastSignalLossConfirmations
             syncState = struct('valid', false);
         end
         sample.outcome = 'no-signal-fast-gate';
         sample.presenceDb = virtualPresenceDb;
-        if graphicsEnabled
-            plotTimer = tic;
-            clear_constellations(beforeScatter, afterScatter);
-            drawnow limitrate nocallbacks;
-            sample.plotMs = sample.plotMs + 1e3 * toc(plotTimer);
-        end
-        [sample.rssMb, sample.cpuTicks] = process_linux_stats();
-        sample.iterationMs = 1e3 * toc(iterationTimer);
-        runtimeSamples(end+1) = sample; %#ok<AGROW>
-        lastUpdate = toc(runTimer);
-        continue;
+    else
+        virtualAbsenceCount = 0;
     end
-    virtualAbsenceCount = 0;
 
     % ── Timestamp continuity check ──
     newestTimestamp = timestamps(end);
@@ -380,7 +371,15 @@ while toc(runTimer) < durationSec && ...
     sample.plotMs = sample.plotMs + 1e3 * toc(plotTimer);
 
     % ── Terminal printout ──
-    sample.outcome = 'decoded';
+    % The fast presence gate controls BER/statistical validity, not the
+    % visual path.  A low-rate constellation remains useful during the
+    % TX 0.25-ms-off phase: it shows the actual equalized noise/transition
+    % cloud instead of replacing it with a synthetic "NO SIGNAL" screen.
+    if signalPresent
+        sample.outcome = 'decoded';
+    else
+        sample.outcome = 'no-signal-fast-gate';
+    end
     sample.snrNullDb = result.snrNullDb;
     sample.snrDmrsDb = result.snrDmrsDb;
     sample.rawBER = result.rawBER;
@@ -864,20 +863,16 @@ for layer = 1:cfg.nLayers
         colors(layer,:), 'filled', 'MarkerFaceAlpha', 0.3, ...
         'DisplayName', sprintf('Layer/port %d', layer));
 end
-% Ideal QPSK reference markers (hidden when no signal)
+% Keep the QPSK reference and fixed axes visible at all times.  The live
+% scatter itself conveys whether the selected interval contains symbols or
+% only equalized noise; it must never be replaced by a mode-specific screen.
 ideal = exp(1j * (pi/4 + (0:3)*pi/2));
 plot(beforeAxis, real(ideal), imag(ideal), 'kx', ...
     'MarkerSize', 10, 'LineWidth', 1.5, ...
-    'HandleVisibility', 'off', 'Tag', 'IdealQPSK', 'Visible', 'off');
+    'HandleVisibility', 'off', 'Tag', 'IdealQPSK');
 plot(afterAxis, real(ideal), imag(ideal), 'kx', ...
     'MarkerSize', 10, 'LineWidth', 1.5, ...
-    'HandleVisibility', 'off', 'Tag', 'IdealQPSK', 'Visible', 'off');
-text(beforeAxis, 0, 0, 'NO SIGNAL', ...
-    'Color', [0.8 0 0], 'FontSize', 18, 'FontWeight', 'bold', ...
-    'HorizontalAlignment', 'center', 'Tag', 'NoSignalText');
-text(afterAxis, 0, 0, 'NO SIGNAL', ...
-    'Color', [0.8 0 0], 'FontSize', 18, 'FontWeight', 'bold', ...
-    'HorizontalAlignment', 'center', 'Tag', 'NoSignalText');
+    'HandleVisibility', 'off', 'Tag', 'IdealQPSK');
 format_axis(beforeAxis, 'Before equalization: valid data REs on RX1');
 format_axis(afterAxis, sprintf( ...
     'After standard Type-1 DM-RS + %dx%d RZF', ...
@@ -936,14 +931,6 @@ presenceDb = median(spectrumDb(inBand, :), 'all') - ...
     median(spectrumDb(guardBand, :), 'all');
 end
 
-function clear_constellations(beforeScatter, afterScatter)
-set(beforeScatter, 'XData', nan, 'YData', nan);
-clear_after_constellation(afterScatter);
-figureHandle = ancestor(beforeScatter, 'figure');
-set(findobj(figureHandle, 'Tag', 'IdealQPSK'), 'Visible', 'off');
-set(findobj(figureHandle, 'Tag', 'NoSignalText'), 'Visible', 'on');
-end
-
 function clear_after_constellation(afterScatter)
 for layer = 1:numel(afterScatter)
     set(afterScatter(layer), 'XData', nan, 'YData', nan);
@@ -953,7 +940,6 @@ end
 function show_constellations(beforeScatter)
 figureHandle = ancestor(beforeScatter, 'figure');
 set(findobj(figureHandle, 'Tag', 'IdealQPSK'), 'Visible', 'on');
-set(findobj(figureHandle, 'Tag', 'NoSignalText'), 'Visible', 'off');
 end
 
 function [frequencyMHz, spectrumDb] = live_spectrum(x, fs, nfft)
