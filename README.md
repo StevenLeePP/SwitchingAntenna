@@ -227,6 +227,7 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 
 - `cmex-2026.07.13.1` -- 新增两阶段启动的软件 ring 丢弃、startup timestamp/sequence 审计与 pending 离线对比；实时星座图改为始终绘制均衡结果并移除 `NO SIGNAL` 覆盖；更新启动队列实测说明。
 - `cmex-2026.07.13.2` -- 修复 frame-PHY 死噪声输出；CFO 改为帧内连续相位，虚拟 RX 固定时偏由 DM-RS H 吸收；新增固定可校准 switch-phase 映射，完成 OTA grid/H/EVM/bit 等价验证。
+- `cmex-2026.07.13.3` -- 新增 `RUN_COMMANDS.md`，集中记录 sudo 板卡运行的可视化 `type1_rx_live` 与无图形 `type1_rx_direct` TX/RX 完整命令及所用空口波形。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 
