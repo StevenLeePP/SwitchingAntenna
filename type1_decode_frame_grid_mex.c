@@ -36,6 +36,9 @@ void mexFunction(int nlhs,mxArray**plhs,int nrhs,const mxArray**prhs){
      pilot-list interpolation order rather than infer a new physical map. */
   for(g=0;g<2;g++)for(j=0;j<306;j+=2){p=2*g;k=(xi[j+p*306+s*306*4]-1)%612;mwSize k1=(xi[j+1+p*306+s*306*4]-1)%612;cf a=G(rs+j+p*306+s*306*4),b=G(rs+j+(p+1)*306+s*306*4),c=G(rs+j+1+p*306+s*306*4),e=G(rs+j+1+(p+1)*306+s*306*4),det=S(M(a,e),M(b,c));for(r=0;r<4;r++){cf y0=G(grid+k+(ns*14+2)*612+r*612*nGridSym),y1=G(grid+k1+(ns*14+2)*612+r*612*nGridSym);cf h0=D(S(M(y0,e),M(b,y1)),det),h1=D(S(M(a,y1),M(y0,c)),det);hp[(p*4+r)*306+j]=h0;hp[(p*4+r)*306+j+1]=h0;hp[((p+1)*4+r)*306+j]=h1;hp[((p+1)*4+r)*306+j+1]=h1;}}
   for(p=0;p<4;p++)for(r=0;r<4;r++)for(k=0;k<612;k++){float u=p<2?.5f*(float)k:.5f*((float)k-1.f),f=floorf(u),al=u-f;mwSize lo,hi;if(f<0){lo=hi=0;al=0;}else if(f>=305){lo=hi=305;al=0;}else{lo=(mwSize)f;hi=lo+1;}cf x=hp[(p*4+r)*306+lo],y=hp[(p*4+r)*306+hi],z={x.re+al*(y.re-x.re),x.im+al*(y.im-x.im)};h[(p*4+r)*612+k]=z;P(hout+k+r*612+p*612*4+s*612*4*4,z);}
+  /* Residual variance on actual DM-RS REs.  Keep this output semantically
+     identical to type1_dmrs_type1_mex rather than returning an unused zero. */
+  for(g=0;g<2;g++)for(j=0;j<306;j++){p=2*g;k=(xi[j+p*306+s*306*4]-1)%612;for(r=0;r<4;r++){cf pred={0,0},y=G(grid+k+(ns*14+2)*612+r*612*nGridSym);for(mwSize q=p;q<p+2;q++)pred=A(pred,M(h[(q*4+r)*612+k],G(rs+j+q*306+s*306*4)));ne+=Q(S(y,pred));nc++;}}
   for(k=0;k<612;k++){cf w[4][4];W(h,k,lam,w);for(l=0;l<14;l++){int m=map[l*612+k];if(m<0)continue;for(p=0;p<4;p++){cf z={0,0},ref=G(qpsk+(mwSize)m+s*7956+p*7956*nslots);for(r=0;r<4;r++)z=A(z,M(w[p][r],G(grid+k+(ns*14+l)*612+r*612*nGridSym)));float dr=z.re-ref.re,dm=z.im-ref.im;ee[p]+=dr*dr+dm*dm;pp[p]+=Q(ref);err[s+p*nslots]+=(z.re<0)!=bits[2*m+s*15912+p*15912*nslots];err[s+p*nslots]+=(z.im<0)!=bits[2*m+1+s*15912+p*15912*nslots];}}}
   for(p=0;p<4;p++)evm[s+p*nslots]=100*sqrt(ee[p]/fmax(pp[p],1e-30));noise[s]=ne/fmax((double)nc,1.0);
  }

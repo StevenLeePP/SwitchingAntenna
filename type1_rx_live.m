@@ -51,6 +51,7 @@ end
 type1_yunsdr_rx_mex('open', cfg.deviceString, cfg.rxSampleRate, ...
     cfg.centerFrequencyHz, cfg.rxGain);
 radioCleanup = onCleanup(@close_live_radio);
+type1_yunsdr_rx_mex('switchphase', cfg.switchPhaseOffset);
 hardwareDepth = type1_yunsdr_rx_mex('hwdepth');
 type1_yunsdr_rx_mex('start', blockSamples, ringBlocks);
 

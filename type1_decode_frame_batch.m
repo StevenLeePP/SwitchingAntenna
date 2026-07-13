@@ -18,10 +18,10 @@ frameWaveform = single(frameWaveform(1:activeSamples,:));
 timer = tic;
 
 t = tic;
-% Keep the same per-slot CFO phase reference as type1_analyze_fast.  A
-% constant phase is harmless to BER, but resetting here makes EVM and all
-% diagnostics exactly comparable to the established one-slot path.
-n = single(mod((0:activeSamples-1).', slotSamples));
+% Use one continuous CFO phase reference across the active frame.  The
+% The per-RX q/122.88-MS/s switch skew is a channel-common phase and is
+% represented by the DM-RS channel estimate, matching native direct_make_grid.
+n = single((0:activeSamples-1).');
 frameWaveform = frameWaveform .* exp(single(-1j*2*pi*frequencyOffsetHz/cfg.txSampleRate) .* n);
 cfoMs = 1e3*toc(t);
 

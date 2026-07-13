@@ -12,6 +12,13 @@ end
 loaded = load(cfg.referenceFile, 'package');
 package = loaded.package;
 
+% RX-side switch calibration is not part of the transmitted waveform.  Keep
+% existing reference MAT files backward compatible when this runtime-only
+% field is introduced after the reference was generated.
+if ~isfield(package.cfg, 'switchPhaseOffset')
+    package.cfg.switchPhaseOffset = cfg.switchPhaseOffset;
+end
+
 % Cross-check that the MAT file was built with the same source version
 assert(strcmp(package.formatVersion, cfg.formatVersion), ...
     'Shared reference format does not match this source version.');

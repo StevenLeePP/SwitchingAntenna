@@ -18,6 +18,7 @@ fprintf('\n========== Type-A direct C PHY RX ==========\n');
 fprintf('duration=%.1fs ring=%dms startup=%s payload slots=[%s]\n',duration,ring,startupMode,num2str(c.dataSlots));
 type1_yunsdr_rx_mex('open',c.deviceString,c.rxSampleRate,c.centerFrequencyHz,c.rxGain);
 cleanup=onCleanup(@close_radio); %#ok<NASGU>
+type1_yunsdr_rx_mex('switchphase',c.switchPhaseOffset);
 type1_yunsdr_rx_mex('start',block,ring); wait_blocks(20);
 [iq,ts]=type1_yunsdr_rx_mex('snapshotvirtual',20);
 acq=type1_analyze_fast(iq,p,c.dataSlots(1),'forcePSS',true, ...

@@ -40,6 +40,7 @@ fprintf('Requirement            : droppedNew must remain zero for valid BER\n\n'
 type1_yunsdr_rx_mex('open', cfg.deviceString, cfg.rxSampleRate, ...
     cfg.centerFrequencyHz, cfg.rxGain);
 cleanup = onCleanup(@close_fifo_radio);
+type1_yunsdr_rx_mex('switchphase', cfg.switchPhaseOffset);
 type1_yunsdr_rx_mex('start', blockSamples, cfg.fifoRingBlocks);
 wait_for_blocks(20);
 type1_yunsdr_rx_mex('fifostart');

@@ -93,6 +93,7 @@ cfg.txChannelMask = hex2dec('f');  % all 4 TX channels enabled
 cfg.rxChannelMask = hex2dec('f');  % all 4 RX channels enabled
 cfg.nTxChannels = 4;
 cfg.nRxChannels = 4;
+cfg.switchPhaseOffset = 0;     % calibrated virtual q -> physical RX (q+offset) mod 4
 cfg.txDurationSec = inf;       % default: run until interrupted
 cfg.txStartLeadSec = 0.050;    % timestamp lead for first frame
 cfg.txStatusPeriodSec = 0.500; % status print interval

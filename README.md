@@ -58,6 +58,7 @@ x=0 的 pending，便于区分软件 ring 历史与驱动 DMA 尚未入环的积
 | CFO 复旋、固定 1024 点 FFT、子载波抽取 | `direct_make_grid` | 是 |
 | DM-RS/data/QPSK/bit maps 的持久副本 | `directphysetup` | 启动一次 |
 | Type-1 DM-RS、4x4 RZF、硬判决、raw BER 累积 | `type1_decode_frame_grid_mex.c` + `directpoll` | 是 |
+| DM-RS 残差噪声方差 | `type1_decode_frame_grid_mex.c` 第 3 输出 | 是，按 slot |
 | PSS 获取、窄窗 PSS 复检、CFO/时间基准控制 | `type1_analyze_fast.m` | 否，0.5 s 控制周期 |
 | PBCH/MIB、全帧 MATLAB 对照、图形显示 | MATLAB 离线/诊断路径 | 否 |
 
@@ -193,6 +194,12 @@ NMSE 约 `-46 dB`，最大 EVM 差约 `0.708%`。尝试用“简单 CP 中点”
 - 以绝对 timestamp `% 4` 选切换天线：已改为相对 DMA block 起点的四相位；
 - 仅每 5 s 校正 PSS timestamp：已改为 0.5 s 窄窗 PSS/CFO/时间健康检查；
 - 时间校正跨 DMA block 后的无符号 timestamp 下溢：已加入跨块归一化与审计。
+- frame-PHY 第 3 输出曾恒为零：现按实际 DM-RS RE 残差计算噪声方差；
+- CFO 曾在每 0.5 ms slot 重置相位：现以 10 ms active frame 为连续相位基准；
+  四个虚拟 RX 间 8.138 ns 的固定时偏作为每 RX 常相位保留在 DM-RS 估计的 H 中，
+  避免无收益的逐 RE 旋转；
+- 开关相位现由 `cfg.switchPhaseOffset` 明确校准（默认 0），`snapshotvirtual`、
+  FIFO 与 direct consumer 共用同一 virtual-to-physical RX 映射，不随 PSS 重锁变化。
 
 ## 结果文件与验收建议
 
@@ -219,3 +226,56 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 后续每次代码修改与提交都必须在本节追加一行，格式为“版本 -- 主要变更”。
 
 - `cmex-2026.07.13.1` -- 新增两阶段启动的软件 ring 丢弃、startup timestamp/sequence 审计与 pending 离线对比；实时星座图改为始终绘制均衡结果并移除 `NO SIGNAL` 覆盖；更新启动队列实测说明。
+- `cmex-2026.07.13.2` -- 修复 frame-PHY 死噪声输出；CFO 改为帧内连续相位，虚拟 RX 固定时偏由 DM-RS H 吸收；新增固定可校准 switch-phase 映射，完成 OTA grid/H/EVM/bit 等价验证。
+
+### `cmex-2026.07.13.2` 详细变更与验证
+
+本版本相对 `6fcdf2a` 的修改如下。
+
+1. **修复 frame-PHY 的噪声诊断输出。**
+   `type1_decode_frame_grid_mex.c` 原先声明但未累计 `ne/nc`，因而第 3 个
+   输出 `noise` 恒为零。现在对每个 slot 的实际 Type-1 DM-RS RE 计算
+   `y - H·r` 残差功率并除以参与统计的 RE 数。此变更不改变 RZF、硬判决或
+   BER 路径，但使噪声诊断与 `type1_dmrs_type1_mex` 的语义一致。
+
+2. **将 direct consumer 的 CFO 从“每 slot 相位复位”改为帧内连续。**
+   `direct_make_grid`、`type1_decode_frame_batch` 以及 grid/H/EVM 对照脚本
+   都以 active 10 ms frame 的连续 virtual-sample 序号计算 CFO 旋转，不再在
+   每个 0.5 ms slot 用 `%15360` 归零。这样 slot 边界不再人为产生 CFO 相位
+   不连续。为保持实时性，C MEX 在 `directstart` 和每次低频
+   `directsetcfo` 时预计算 168,960 点 CFO 复旋表；逐帧热路径只查表相乘，
+   不在 154×4×1024 个样点内重复调用 `sinf/cosf`。
+
+3. **固定并显式配置 virtual-to-physical RX 映射。**
+   新增 `cfg.switchPhaseOffset`（默认 0）和 MEX 命令
+   `type1_yunsdr_rx_mex('switchphase',offset)`。virtual 链 `q` 始终读取物理
+   RX `(q + offset) mod 4`，且 `snapshotvirtual`、FIFO、native direct grid
+   使用同一映射；映射不再随 PSS 锁定点、DMA block 或重新锁定而漂移。旧的
+   reference MAT 不含该运行时字段时，`type1_load_package` 自动补入默认值，
+   不需要重新生成 TX 波形。
+
+4. **固定时偏的处理选择。**
+   四个切换 virtual RX 相差一个 122.88 MS/s 采样周期（8.138 ns）。本版本
+   不在热路径增加逐 RE 的补偿旋转：它在窄带 OFDM 中表现为每个 RX 的固定
+   公共相位，已由 Type-1 DM-RS 的每 RX 信道估计 `H` 吸收。此选择保持当前
+   4×4 RZF 数值等价；若后续采用需要绝对物理天线相位的 M>N/BABF 校准，须以
+   `switchPhaseOffset` 为固定基准，并在校准链中显式处理该相位。
+
+5. **更新验证路径。**
+   `type1_validate_native_ring_grid.m` 和 `type1_compare_direct_stages.m`
+   使用相同的连续 CFO 基准和 switch-phase 配置，避免 MATLAB 对照本身带有
+   slot-reset 假差异。已验证 native-grid 相对 MATLAB CP-end grid 的 NMSE
+   约 `-115 dB`、H NMSE 约 `-115 dB`、EVM 差约 `9e-6%`，逐帧 raw bit errors
+   一致；这确认上述实现修正没有引入可测的 C/MATLAB 栅格或判决偏差。
+
+6. **本版本 60 s OTA 观察（结果目录
+   `captures/type1_direct_20260713_194952/`）。**
+   TX 持续 70 s，四路 underflow 为 0；RX 硬件 overflow/count/timeout 增量全为
+   0，`dropNew=0`，共解码 5,989 帧。5–58 s 的稳态 pending 中位数为 9 ms、
+   P95 不高于约 19 ms，C 平均时延为 extract `1.71 ms`、FFT `5.11 ms`、PHY
+   `2.00 ms`、总计约 `8.99 ms`。约 58.7 s 前的汇总 BER 约 `6.3e-8`。
+   第 59 s MATLAB PSS 健康检查两次超出 ±512 sample 跟踪窗口；该控制面调用
+   暂停了 `directpoll`，pending 在结束时升至 206 ms，且失锁帧被继续硬判决，
+   使包含异常尾段的全程 BER 变为约 `7.1e-3`。因此该测试证明 C 数据面未发生
+   持续时延退化，但也暴露出 PSS 控制面失锁会阻塞消费者；全程 BER 不能作为
+   稳态 BER 指标，必须将该事件单独诊断。

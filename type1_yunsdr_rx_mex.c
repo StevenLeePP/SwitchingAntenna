@@ -12,6 +12,7 @@
  *   start  <block_samples> <ring_blk>  — launch background RX thread
  *   snapshot <n_blocks>                 — copy n raw 122.88 MS/s blocks
  *   snapshotvirtual <n_blocks>          — C-side switch + return virtual30 IQ
+ *   switchphase [0..3]                  — get/set calibrated virtual-to-RX phase
  *   ofdmgrid <iq> <cp> <cfo> <period> [window] — offline C OFDM test grid
  *   fifostart / fifostop                — enable/disable ordered FIFO mode
  *   dequeuevirtual <n_blocks>           — consume oldest virtual30 blocks
@@ -78,6 +79,10 @@ static int g_fifo_mode = 0;
 static uint64_t g_consumer_sequence = 0;
 static uint64_t g_fifo_dropped_new = 0;
 static uint64_t g_fifo_high_water = 0;
+/* Fixed, calibrated cyclic mapping from virtual switch phase to physical RX
+ * channel.  It is independent of PSS/directstart and remains stable for a
+ * streaming session; default 0 preserves the historical RX1..RX4 mapping. */
+static uint32_t g_switch_phase_offset = 0;
 
 /* Direct-benchmark state.  This is the first persistent-consumer stage: it
  * deliberately performs native-ring switch extraction and all required
@@ -122,6 +127,10 @@ typedef struct {
 } type1_direct_runtime;
 static type1_direct_runtime g_direct_run = {0};
 
+/* slot 0 plus payload slots 1:10: 11 * 15360 virtual samples. */
+#define TYPE1_DIRECT_FRAME_SAMPLES 168960u
+static type1_cf *g_direct_cfo_rotation = NULL;
+
 #define TYPE1_DIRECT_AUDIT_CAPACITY 256u
 typedef struct {
     uint64_t measured_raw;
@@ -164,8 +173,10 @@ static void stop_stream(void)
     }
     free(g_ring_iq);
     free(g_ring_timestamp);
+    free(g_direct_cfo_rotation);
     g_ring_iq = NULL;
     g_ring_timestamp = NULL;
+    g_direct_cfo_rotation = NULL;
     g_block_samples = 0;
     g_ring_blocks = 0;
     g_sequence = 0;
@@ -753,11 +764,11 @@ static type1_cf direct_sample_raw(uint64_t first_sequence, uint64_t first_timest
     uint64_t sequence = first_sequence + delta / g_block_samples;
     size_t sample = (size_t)(delta % g_block_samples);
     uint32_t slot = (uint32_t)(sequence % g_ring_blocks);
-    /* The digital switch is indexed from the DMA block's first sample, as
-       in snapshotvirtual: virtual(m,q)=raw(4*m+q,q).  Hardware timestamps
-       need not be divisible by four, so absolute timestamp modulo four
-       would rotate the antenna selection and corrupt the native grid. */
-    int channel = (int)(delta & 3u);
+    /* The DMA block size is divisible by four, therefore sample&3 is a
+       stream-stable switch phase and does not depend on the PSS-locked
+       frame/block origin.  The calibrated offset fixes physical RX labels
+       across direct re-locks (virtual q -> physical (q+offset) mod 4). */
+    int channel = (int)((sample + g_switch_phase_offset) & 3u);
     size_t source = (((size_t)slot * 4 + (size_t)channel) *
         (size_t)g_block_samples * 2 + 2 * sample);
     type1_cf value = {(float)g_ring_iq[source] / 32768.0f,
@@ -765,8 +776,28 @@ static type1_cf direct_sample_raw(uint64_t first_sequence, uint64_t first_timest
     return value;
 }
 
+/* Rebuilt only when the low-rate CFO estimate changes.  This removes the
+ * continuous-CFO sin/cos work from the 100-frame/s direct hot path while
+ * preserving the exact per-virtual-sample phase used by MATLAB validation. */
+static void direct_prepare_cfo_rotation(float cfo_hz)
+{
+    uint32_t n;
+    if (g_direct_cfo_rotation == NULL) {
+        g_direct_cfo_rotation = (type1_cf *)malloc(
+            (size_t)TYPE1_DIRECT_FRAME_SAMPLES * sizeof(type1_cf));
+        if (g_direct_cfo_rotation == NULL)
+            mexErrMsgIdAndTxt("nr4:mex:Memory", "Could not allocate direct CFO rotation table.");
+    }
+    for (n = 0; n < TYPE1_DIRECT_FRAME_SAMPLES; ++n) {
+        float phase = -2.0f * TYPE1_PI * cfo_hz * (float)n / TYPE1_VIRTUAL_FS;
+        g_direct_cfo_rotation[n].real = cosf(phase);
+        g_direct_cfo_rotation[n].imag = sinf(phase);
+    }
+}
+
 static mxArray *direct_make_grid(uint64_t first_sequence, uint64_t first_timestamp,
                                  uint64_t frame_raw, float cfo_hz,
+                                 const type1_cf *cfo_rotation,
                                  double *extract_ms, double *fft_ms)
 {
     mwSize dims[3] = {612,154,4};
@@ -780,12 +811,17 @@ static mxArray *direct_make_grid(uint64_t first_sequence, uint64_t first_timesta
         size_t fft_start = cursor + cp;
         for (channel=0; channel<4; ++channel) {
             type1_cf work[TYPE1_NFFT]; uint32_t n; double t=monotonic_ms();
+            uint64_t raw0 = frame_raw + 4*(uint64_t)fft_start + (uint64_t)channel;
             for (n=0;n<TYPE1_NFFT;++n) {
-                uint64_t raw = frame_raw + 4*(fft_start+n) + (uint64_t)channel;
-                float phase = -2.0f*TYPE1_PI*cfo_hz*(float)((fft_start+n)%15360)/TYPE1_VIRTUAL_FS;
-                type1_cf v=direct_sample_raw(first_sequence,first_timestamp,raw);
-                float cr=cosf(phase), si=sinf(phase);
-                work[n].real=v.real*cr-v.imag*si; work[n].imag=v.real*si+v.imag*cr;
+                /* One continuous frame-time CFO reference: no 0.5-ms slot
+                   reset.  The fixed q/122.88-MS/s switched-RX skew is a
+                   per-RX common phase and remains in the DM-RS-estimated H,
+                   avoiding an unnecessary per-frame grid rotation. */
+                type1_cf v=direct_sample_raw(first_sequence,first_timestamp,raw0 + 4u*(uint64_t)n);
+                type1_cf rot;
+                if (cfo_rotation != NULL) rot = cfo_rotation[fft_start+n];
+                else { float phase = -2.0f*TYPE1_PI*cfo_hz*(float)(fft_start+n)/TYPE1_VIRTUAL_FS; rot.real=cosf(phase); rot.imag=sinf(phase); }
+                work[n].real=v.real*rot.real-v.imag*rot.imag; work[n].imag=v.real*rot.imag+v.imag*rot.real;
             }
             *extract_ms += monotonic_ms()-t; t=monotonic_ms(); type1_fft1024(work); *fft_ms += monotonic_ms()-t;
             for (n=0;n<612;++n) { uint32_t bin=n<306?718+n:n-306; size_t d=n+(size_t)symbol*612+(size_t)channel*612*154; out[d].real=work[bin].real; out[d].imag=work[bin].imag; }
@@ -837,7 +873,7 @@ static void command_direct_grid(int nlhs, mxArray **plhs, int nrhs,
     /* The ring is sized in seconds and this diagnostic takes ~7 ms.  Holding
        the mutex makes its source samples immutable for the comparison. */
     plhs[0] = direct_make_grid(found, g_ring_timestamp[found % g_ring_blocks],
-                               wanted, cfo_hz, &extract_ms, &fft_ms);
+                               wanted, cfo_hz, NULL, &extract_ms, &fft_ms);
     pthread_mutex_unlock(&g_ring_mutex);
     if (nlhs > 1) {
         plhs[1] = mxCreateDoubleMatrix(1, 2, mxREAL);
@@ -861,6 +897,7 @@ static void command_direct_start(int nlhs,mxArray **plhs,int nrhs,const mxArray 
     g_direct_audit_count=0; g_direct_audit_overflow=0;
     g_direct_run.running=1; g_direct_run.first_sequence=found; g_direct_run.first_timestamp=g_ring_timestamp[found%g_ring_blocks]; g_direct_run.next_frame_raw=wanted; g_direct_run.cfo_hz=(float)mxGetScalar(prhs[2]);
     pthread_mutex_unlock(&g_ring_mutex);
+    direct_prepare_cfo_rotation((float)mxGetScalar(prhs[2]));
     if(nlhs)plhs[0]=mxCreateLogicalScalar(true);
     if(nlhs>1)plhs[1]=make_u64(found);
     if(nlhs>2)plhs[2]=make_u64(sequence);
@@ -916,7 +953,7 @@ static void command_direct_poll(int nlhs,mxArray **plhs,int nrhs,const mxArray *
     uint32_t max,done=0; if(nrhs!=2)mexErrMsgIdAndTxt("nr4:mex:DirectPollArgs","directpoll requires max frames."); max=scalar_u32(prhs[1],"max frames");
     while(done<max){uint64_t producer; mxArray *grid,*rhs[8],*lhs[4]={0}; double ex=0,ff=0,t,phy; uint32_t p;
         pthread_mutex_lock(&g_ring_mutex); producer=g_sequence; if(!g_direct_run.running||producer<g_direct_run.first_sequence+6){pthread_mutex_unlock(&g_ring_mutex);break;} pthread_mutex_unlock(&g_ring_mutex);
-        t=monotonic_ms(); grid=direct_make_grid(g_direct_run.first_sequence,g_direct_run.first_timestamp,g_direct_run.next_frame_raw,g_direct_run.cfo_hz,&ex,&ff);
+        t=monotonic_ms(); grid=direct_make_grid(g_direct_run.first_sequence,g_direct_run.first_timestamp,g_direct_run.next_frame_raw,g_direct_run.cfo_hz,g_direct_cfo_rotation,&ex,&ff);
         rhs[0]=grid;rhs[1]=g_direct_phy.mx_slots;rhs[2]=g_direct_phy.mx_dmrs_indices;rhs[3]=g_direct_phy.mx_dmrs_symbols;rhs[4]=g_direct_phy.mx_data_indices;rhs[5]=g_direct_phy.mx_data_qpsk;rhs[6]=g_direct_phy.mx_coded_bits;rhs[7]=g_direct_phy.mx_lambda;phy=monotonic_ms(); if(mexCallMATLAB(4,lhs,8,rhs,"type1_decode_frame_grid_mex")!=0){mxDestroyArray(grid);mexErrMsgIdAndTxt("nr4:mex:DirectPhyKernel","C PHY kernel failed.");} phy=monotonic_ms()-phy;
         for(p=0;p<4;++p){double *e=mxGetDoubles(lhs[0]); g_direct_run.bit_errors[p]+=(uint64_t)e[p*10]+(uint64_t)e[p*10+1]+(uint64_t)e[p*10+2]+(uint64_t)e[p*10+3]+(uint64_t)e[p*10+4]+(uint64_t)e[p*10+5]+(uint64_t)e[p*10+6]+(uint64_t)e[p*10+7]+(uint64_t)e[p*10+8]+(uint64_t)e[p*10+9];g_direct_run.bits[p]+=159120;}
         mxDestroyArray(grid);mxDestroyArray(lhs[0]);mxDestroyArray(lhs[1]);mxDestroyArray(lhs[2]);mxDestroyArray(lhs[3]);g_direct_run.extract_ms+=ex;g_direct_run.fft_ms+=ff;g_direct_run.phy_ms+=phy;g_direct_run.total_ms+=monotonic_ms()-t;g_direct_run.frames++;done++;
@@ -966,6 +1003,26 @@ static void command_direct_stop(int nlhs, mxArray **plhs, int nrhs)
     if (nlhs > 0) plhs[0] = mxCreateLogicalScalar(true);
 }
 
+/* Calibrated cyclic mapping used by snapshotvirtual and native direct-grid
+ * extraction.  A zero offset preserves virtual q -> physical RX q; setting
+ * p maps virtual q to physical RX (q+p) mod 4 and is stable across PSS
+ * re-locks/direct starts. */
+static void command_switch_phase(int nlhs, mxArray **plhs, int nrhs,
+                                 const mxArray **prhs)
+{
+    if (nrhs == 2) {
+        uint32_t phase = scalar_u32(prhs[1], "switch phase");
+        if (phase > 3u)
+            mexErrMsgIdAndTxt("nr4:mex:SwitchPhase", "switch phase must be 0..3.");
+        pthread_mutex_lock(&g_ring_mutex);
+        g_switch_phase_offset = phase;
+        pthread_mutex_unlock(&g_ring_mutex);
+    } else if (nrhs != 1) {
+        mexErrMsgIdAndTxt("nr4:mex:SwitchPhase", "switchphase accepts zero or one phase argument.");
+    }
+    if (nlhs > 0) plhs[0] = mxCreateDoubleScalar((double)g_switch_phase_offset);
+}
+
 /* Control-plane only: MATLAB's low-rate PSS/CP tracker refreshes CFO while
  * the data plane remains in native C. */
 static void command_direct_set_cfo(int nlhs, mxArray **plhs, int nrhs,
@@ -975,6 +1032,7 @@ static void command_direct_set_cfo(int nlhs, mxArray **plhs, int nrhs,
         mexErrMsgIdAndTxt("nr4:mex:DirectCFOArgs", "directsetcfo requires one scalar CFO in Hz.");
     if (!isfinite(mxGetScalar(prhs[1])))
         mexErrMsgIdAndTxt("nr4:mex:DirectCFOArgs", "CFO must be finite.");
+    direct_prepare_cfo_rotation((float)mxGetScalar(prhs[1]));
     pthread_mutex_lock(&g_ring_mutex);
     if (!g_direct_run.running) {
         pthread_mutex_unlock(&g_ring_mutex);
@@ -1484,11 +1542,12 @@ static void command_snapshot_virtual(int nlhs, mxArray **plhs, int nrhs,
         slot = (uint32_t)(block_sequence % g_ring_blocks);
         timestamp_copy[block] = g_ring_timestamp[slot];
         for (ch = 0; ch < 4; ++ch) {
-            source_offset = (((size_t)slot * 4 + ch) *
-                             (size_t)g_block_samples * 2);
             for (n = 0; n < g_block_samples / 4; ++n) {
                 size_t input_sample = 4 * (size_t)n + (size_t)ch;
+                int source_channel = (ch + (int)g_switch_phase_offset) & 3;
                 output_row = (size_t)block * (g_block_samples / 4) + n;
+                source_offset = (((size_t)slot * 4 + (size_t)source_channel) *
+                                 (size_t)g_block_samples * 2);
                 output[output_row + (size_t)ch * output_rows].real =
                     (float)g_ring_iq[source_offset + 2 * input_sample] / 32768.0f;
                 output[output_row + (size_t)ch * output_rows].imag =
@@ -1549,7 +1608,8 @@ static void command_dequeue_virtual(int nlhs, mxArray **plhs, int nrhs,
         slot = (uint32_t)((first + block) % g_ring_blocks);
         if (timestamps != NULL) timestamps[block] = g_ring_timestamp[slot];
         for (ch = 0; ch < 4; ++ch) {
-            size_t source = (((size_t)slot * 4 + ch) *
+            int source_channel = (ch + (int)g_switch_phase_offset) & 3;
+            size_t source = (((size_t)slot * 4 + (size_t)source_channel) *
                              (size_t)g_block_samples * 2);
             for (n = 0; n < g_block_samples/4; ++n) {
                 size_t input = 4*(size_t)n + (size_t)ch;
@@ -1721,6 +1781,8 @@ void mexFunction(int nlhs, mxArray **plhs, int nrhs, const mxArray **prhs)
         command_snapshot(nlhs, plhs, nrhs, prhs);
     } else if (strcmp(command, "snapshotvirtual") == 0) {
         command_snapshot_virtual(nlhs, plhs, nrhs, prhs);
+    } else if (strcmp(command, "switchphase") == 0) {
+        command_switch_phase(nlhs, plhs, nrhs, prhs);
     } else if (strcmp(command, "ofdmgrid") == 0) {
         command_ofdm_grid(nlhs, plhs, nrhs, prhs);
     } else if (strcmp(command, "directbenchstart") == 0) {

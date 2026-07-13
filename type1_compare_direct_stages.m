@@ -9,7 +9,8 @@ if exist('type1_yunsdr_rx_mex','file')~=3, type1_build_rx_mex(); end
 if exist('type1_decode_frame_grid_mex','file')~=3, type1_build_frame_mex(); end
 block=round(c.rxSampleRate*1e-3); ring=round(env_positive('TYPE1_FIFO_RING_BLOCKS',2048));
 type1_yunsdr_rx_mex('open',c.deviceString,c.rxSampleRate,c.centerFrequencyHz,c.rxGain);
-cleanup=onCleanup(@close_radio); %#ok<NASGU>
+cleanup=onCleanup(@close_radio);
+type1_yunsdr_rx_mex('switchphase',c.switchPhaseOffset);
 type1_yunsdr_rx_mex('start',block,ring); wait_blocks(40);
 [iq,timestamps]=type1_yunsdr_rx_mex('snapshotvirtual',40);
 acq=type1_analyze_fast(iq,p,c.dataSlots(1),'forcePSS',true, ...
@@ -22,7 +23,7 @@ start=acq.timingOffset+1;
 assert(start>=1 && start+activeSamples-1<=size(iq,1),'type1:StageCompare','Short PSS frame.');
 rawFrame=single(iq(start:start+activeSamples-1,:));
 cfo=double(acq.frequencyOffsetHz);
-n=single(mod((0:activeSamples-1).',slotSamples));
+n=single((0:activeSamples-1).');
 compensated=rawFrame.*exp(single(-1j*2*pi*cfo/c.txSampleRate).*n);
 carrier=type1_carrier_config(c,0);
 matlabDefault=single(nrOFDMDemodulate(carrier,compensated, ...
@@ -71,8 +72,14 @@ fprintf('EVM max difference native/end=%.6g%%; end/default=%.6g%%\n', ...
 assert(report.gridNmse.nativeVsMatlabEndDb<-75,'type1:StageCompare','Native FFT grid mismatch.');
 assert(isequal(nativeErrors,endErrors),'type1:StageCompare','Native and MATLAB-end C-PHY bits differ.');
     function close_radio()
-        try,type1_yunsdr_rx_mex('stop');catch,end
-        try,type1_yunsdr_rx_mex('close');catch,end
+        try
+            type1_yunsdr_rx_mex('stop');
+        catch
+        end
+        try
+            type1_yunsdr_rx_mex('close');
+        catch
+        end
     end
 end
 function value=pack_c(errors,evm)

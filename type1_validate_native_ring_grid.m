@@ -9,6 +9,7 @@ ring=round(env_positive('TYPE1_FIFO_RING_BLOCKS',2048));
 block=round(c.rxSampleRate*1e-3);
 type1_yunsdr_rx_mex('open',c.deviceString,c.rxSampleRate,c.centerFrequencyHz,c.rxGain);
 cleanup=onCleanup(@close_radio); %#ok<NASGU>
+type1_yunsdr_rx_mex('switchphase',c.switchPhaseOffset);
 type1_yunsdr_rx_mex('start',block,ring); wait_blocks(40);
 
 % A 40-ms snapshot leaves several PSS candidates; acquisition chooses one
@@ -27,8 +28,8 @@ assert(start>=1 && start+activeSamples-1<=size(iq,1), ...
     'type1:NativeGrid','PSS frame is not wholly contained in snapshot.');
 cfo=double(acq.frequencyOffsetHz);
 frame=single(iq(start:start+activeSamples-1,:));
-phase=mod((0:activeSamples-1).',slotSamples);
-frame=frame.*exp(single(-1j*2*pi*cfo/c.txSampleRate).*single(phase));
+phase=single((0:activeSamples-1).');
+frame=frame.*exp(single(-1j*2*pi*cfo/c.txSampleRate).*phase);
 matlabGrid=single(nrOFDMDemodulate(type1_carrier_config(c,0),frame, ...
     'Nfft',c.nfft,'SampleRate',c.txSampleRate,'CarrierFrequency',0, ...
     'CyclicPrefixFraction',1));
