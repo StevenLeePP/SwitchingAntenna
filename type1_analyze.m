@@ -147,6 +147,12 @@ spatialDecodeEnabled = nRxChannels >= nLayers;
 postCompData = complex(zeros(nDataRE, nSlots, nLayers));
 preCompData = complex(zeros(nDataRE, nSlots));
 noiseVariance = zeros(1, nSlots);
+snrNullDbBySlot = nan(nSlots, nRxChannels);
+snrDmrsDbBySlot = nan(nSlots, nRxChannels);
+snrNullSignalPowerBySlot = nan(nSlots, nRxChannels);
+snrNullNoisePowerBySlot = nan(nSlots, nRxChannels);
+snrDmrsSignalPowerBySlot = nan(nSlots, nRxChannels);
+snrDmrsResidualPowerBySlot = nan(nSlots, nRxChannels);
 conditionNumbers = [];
 channelMatrixCenterBySlot = complex(nan(nRxChannels, nLayers, nSlots));
 channelMatrixMagnitudeMeanBySlot = nan(nRxChannels, nLayers, nSlots);
@@ -162,6 +168,19 @@ for s = 1:nSlots
     [channel, noiseVariance(s)] = nrChannelEstimate( ...
         rxSlot, dmrsIndices, dmrsSymbols, ...
         'CDMLengths', package.dmrsCDMLengths);     % [2 1] for OCC
+
+    % Aggregate input SNR before equalization: active/null FFT bins and
+    % standard DM-RS prediction/residual, separately for every RX channel.
+    slotStart = slot * slotSamples;
+    slotWaveform = frameWaveform(slotStart + (1:slotSamples), :);
+    snrMetrics = type1_snr_metrics(slotWaveform, rxSlot, channel, ...
+        noiseVariance(s), package, s);
+    snrNullDbBySlot(s, :) = snrMetrics.snrNullDb;
+    snrDmrsDbBySlot(s, :) = snrMetrics.snrDmrsDb;
+    snrNullSignalPowerBySlot(s, :) = snrMetrics.nullSignalPower;
+    snrNullNoisePowerBySlot(s, :) = snrMetrics.nullNoisePower;
+    snrDmrsSignalPowerBySlot(s, :) = snrMetrics.dmrsSignalPower;
+    snrDmrsResidualPowerBySlot(s, :) = snrMetrics.dmrsResidualPower;
 
     % Extract data REs (all layers share the same 2D positions)
     firstLayerIndices = double(package.dataIndices(:, 1, s));
@@ -237,9 +256,19 @@ if spatialDecodeEnabled
             codedBitErrors(s, layer) = sum(hardBits ~= expectedCoded);
             codedBER(s, layer) = codedBitErrors(s, layer) / numel(expectedCoded);
 
-            % Viterbi decoding (terminated trellis, 'term' mode)
-            decoded = logical(vitdec(double(hardBits), package.trellis, ...
-                cfg.viterbiTraceback, 'term', 'hard'));
+            % Optional decoder. In the default 'none' mode, decoded BER is
+            % exactly the uncoded PHY BER and contains no coding gain.
+            switch package.channelCoding
+                case 'none'
+                    decoded = hardBits;
+                case 'convolutional'
+                    decoded = logical(vitdec(double(hardBits), ...
+                        package.trellis, cfg.viterbiTraceback, ...
+                        'term', 'hard'));
+                otherwise
+                    error('type1:Coding', 'Unsupported coding mode %s.', ...
+                        package.channelCoding);
+            end
             expectedInfo = package.infoBits(:, s, layer);
             decoded = decoded(1:numel(expectedInfo));      % strip tail bits
             infoBitErrors(s, layer) = sum(decoded ~= expectedInfo);
@@ -279,12 +308,25 @@ result.nLayers = nLayers;
 result.spatialDecodeEnabled = spatialDecodeEnabled;
 result.preCompData = preCompData;
 result.postCompData = postCompData;
+result.channelCoding = package.channelCoding;
 result.codedBER = codedBER;
 result.infoBER = infoBER;
 result.codedBitErrors = codedBitErrors;
 result.infoBitErrors = infoBitErrors;
+result.rawBER = codedBER;
+result.decodedBER = infoBER;
+result.rawBitErrors = codedBitErrors;
+result.decodedBitErrors = infoBitErrors;
 result.evmRMSPercent = evmRMSPercent;
 result.noiseVariance = noiseVariance;
+result.snrNullDbBySlot = snrNullDbBySlot;
+result.snrDmrsDbBySlot = snrDmrsDbBySlot;
+result.snrNullDb = median(snrNullDbBySlot, 1, 'omitnan');
+result.snrDmrsDb = median(snrDmrsDbBySlot, 1, 'omitnan');
+result.snrNullSignalPowerBySlot = snrNullSignalPowerBySlot;
+result.snrNullNoisePowerBySlot = snrNullNoisePowerBySlot;
+result.snrDmrsSignalPowerBySlot = snrDmrsSignalPowerBySlot;
+result.snrDmrsResidualPowerBySlot = snrDmrsResidualPowerBySlot;
 result.conditionNumbers = conditionNumbers;
 result.channelMatrixCenterBySlot = channelMatrixCenterBySlot;
 result.channelMatrixMagnitudeMeanBySlot = channelMatrixMagnitudeMeanBySlot;

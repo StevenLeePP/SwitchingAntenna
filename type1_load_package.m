@@ -17,4 +17,6 @@ assert(strcmp(package.formatVersion, cfg.formatVersion), ...
     'Shared reference format does not match this source version.');
 assert(isequal(package.cfg.dmrsPortSet, 0:3));
 assert(strcmp(package.cfg.pdschMappingType, 'A'));
+assert(isfield(package, 'channelCoding'));
+assert(any(strcmp(package.channelCoding, {'none', 'convolutional'})));
 end

@@ -83,9 +83,14 @@ fprintf('LO / sample rate     : %.3f GHz / %.2f MS/s\n', ...
     cfg.centerFrequencyHz / 1e9, cfg.txSampleRate / 1e6);
 fprintf('Frame                : %d samples / 10 ms\n', frameSamples);
 fprintf('Slot 0               : standard SSB/PBCH from TX1\n');
-fprintf('Slots 1...19         : Type-A, DM-RS l=2, 13 data symbols\n');
+fprintf('Payload slots         : [%s] (%s mode), Type-A DM-RS l=2\n', ...
+    num2str(cfg.dataSlots), cfg.payloadSlotMode);
+fprintf('Other slots           : zero (no DM-RS and no payload)\n');
 fprintf('DM-RS ports          : 1000, 1001, 1002, 1003\n');
-fprintf('Data                 : four different QPSK layers\n');
+fprintf('Data                 : four telemetry QPSK sources\n');
+fprintf('Channel coding       : %s\n', package.channelCoding);
+fprintf('Source example       : %s\n', ...
+    package.payloadMetadata(1, 1).message);
 if isfinite(cfg.txDurationSec)
     fprintf('Run duration          : %.1f s\n\n', cfg.txDurationSec);
 else

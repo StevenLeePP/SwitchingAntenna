@@ -8,9 +8,11 @@ function package = type1_build_package(cfg)
 %             (l=2) and 13 QPSK data symbols per slot.
 %    Four layers share the same time-frequency REs (spatial multiplexing).
 %
-%  Data encoding per slot, per layer (independently terminated):
-%    info bits -> [+6 tail zeros] -> K=7 R=1/2 conv. code -> QPSK -> REs
-%    Each slot can be decoded independently (no cross-slot dependency).
+%  Data mapping is selected by cfg.channelCoding:
+%    none:          source bits -> QPSK (default, raw PHY BER)
+%    convolutional: source bits -> terminated K=7 R=1/2 code -> QPSK
+%  Every source begins with a readable telemetry header and uses a
+%  deterministic PRBS body. Each slot can be decoded independently.
 
 arguments
     cfg (1,1) struct
@@ -72,19 +74,27 @@ assert(size(dataIndicesOne, 2) == nLayers);
 nDataRE = size(dataIndicesOne, 1);
 assert(nDataRE == nSC * numel(cfg.dataSymbolSet));
 
-% ── Convolutional code setup: K=7, R=1/2, [171o 133o] ──
-tailLength = cfg.convConstraintLength - 1;        % 6 tail zeros
-nInfoBits = nDataRE - tailLength;                 % 7950 info bits
-nCodedBits = 2 * nDataRE;                         % 15912 coded bits -> 7956 QPSK
-trellis = poly2trellis(cfg.convConstraintLength, ...
-    cfg.convGeneratorsOctal);
+% Every QPSK RE carries two mapped bits, independent of coding mode.
+nCodedBits = 2 * nDataRE;                         % 15912 mapped bits
+switch cfg.channelCoding
+    case 'none'
+        tailLength = 0;
+        nInfoBits = nCodedBits;                   % no coding expansion
+        trellis = [];
+    case 'convolutional'
+        tailLength = cfg.convConstraintLength - 1;
+        nInfoBits = nDataRE - tailLength;         % 7950 information bits
+        trellis = poly2trellis(cfg.convConstraintLength, ...
+            cfg.convGeneratorsOctal);
+    otherwise
+        error('type1:Coding', 'Unsupported coding mode %s.', ...
+            cfg.channelCoding);
+end
 
 % ══════════════════════════════════════════════════════════════
-%  Per-slot, per-layer data generation.
-%  Each (slot, layer) pair gets an independent random seed:
-%    seed = 100000 + 1000*slot + layer
-%  This determinism lets RX compute exact BER without sending
-%  the bits over the air.
+%  Per-slot, per-layer meaningful deterministic data generation.
+%  The shared MAT file lets RX compute exact BER without signalling
+%  the expected source data over the air.
 % ══════════════════════════════════════════════════════════════
 infoBits = false(nInfoBits, nSlots, nLayers);
 codedBits = false(nCodedBits, nSlots, nLayers);
@@ -92,6 +102,9 @@ dataQPSK = complex(zeros(nDataRE, nSlots, nLayers, 'single'));
 dmrsSymbols = complex(zeros(306, nLayers, nSlots, 'single'));
 dmrsIndices = zeros(306, nLayers, nSlots, 'uint32');
 dataIndices = zeros(nDataRE, nLayers, nSlots, 'uint32');
+[~, metadataTemplate] = type1_make_payload_bits( ...
+    1, cfg.dataSlots(1), 1, cfg);
+payloadMetadata = repmat(metadataTemplate, nSlots, nLayers);
 
 for s = 1:nSlots
     slot = cfg.dataSlots(s);
@@ -105,13 +118,16 @@ for s = 1:nSlots
     slotGrid(localDMRSIndices) = localDMRSSymbols;
 
     for layer = 1:nLayers
-        % Deterministic random bits per slot and layer
-        stream = RandStream('mt19937ar', ...
-            'Seed', 100000 + 1000 * slot + layer);
-        localInfo = logical(randi(stream, [0 1], nInfoBits, 1));
-        % Terminated convolutional encoding: append K-1=6 zeros
-        encoderInput = [localInfo; false(tailLength, 1)];
-        localCoded = logical(convenc(double(encoderInput), trellis));
+        [localInfo, localMetadata] = type1_make_payload_bits( ...
+            nInfoBits, slot, layer, cfg);
+        switch cfg.channelCoding
+            case 'none'
+                localCoded = localInfo;
+            case 'convolutional'
+                % Terminated convolutional encoding: append K-1 zeros.
+                encoderInput = [localInfo; false(tailLength, 1)];
+                localCoded = logical(convenc(double(encoderInput), trellis));
+        end
         localQPSK = nrSymbolModulate(int8(localCoded), cfg.modulation);
         assert(numel(localCoded) == nCodedBits);
         assert(numel(localQPSK) == nDataRE);
@@ -119,6 +135,7 @@ for s = 1:nSlots
         infoBits(:, s, layer) = localInfo;
         codedBits(:, s, layer) = localCoded;
         dataQPSK(:, s, layer) = single(localQPSK);
+        payloadMetadata(s, layer) = localMetadata;
         slotGrid(localDataIndices(:, layer)) = localQPSK;
     end
 
@@ -155,12 +172,15 @@ package = struct;
 package.formatVersion = cfg.formatVersion;
 package.generatedAt = datetime('now');
 package.cfg = cfg;
+package.channelCoding = cfg.channelCoding;
 package.mib = mib;
 package.bchCodeword = bchCW;
 package.ssbSubcarriers = ssbSC;
 package.ssbSymbols = ssbSym;
 package.infoBits = infoBits;                % [7950 x 19 x 4] logical
+package.sourceBits = infoBits;              % explicit pre-code source bits
 package.codedBits = codedBits;              % [15912 x 19 x 4] logical
+package.payloadMetadata = payloadMetadata;  % readable source identity/telemetry
 package.dataQPSK = dataQPSK;                % [7956 x 19 x 4] single
 package.dmrsSymbols = dmrsSymbols;          % [306 x 4 x 19] single
 package.dmrsIndices = dmrsIndices;          % [306 x 4 x 19] uint32
@@ -178,6 +198,9 @@ package.nCodedBitsPerSlotLayer = nCodedBits;% 15912
 
 fprintf(['Built Type-A package: one SSB slot + %d data slots, ' ...
     '%d QPSK RE/slot/layer.\n'], nSlots, nDataRE);
+fprintf('Channel coding: %s, source/mapped bits=%d/%d per slot/layer.\n', ...
+    cfg.channelCoding, nInfoBits, nCodedBits);
+fprintf('Source example: %s\n', payloadMetadata(1, 1).message);
 fprintf(['DM-RS: Type %d, symbol l=%d, ports 1000...1003, ' ...
     'CDM groups=[%s], CDM lengths=[%s].\n'], ...
     cfg.dmrsConfigurationType, cfg.dmrsTypeAPosition, ...
