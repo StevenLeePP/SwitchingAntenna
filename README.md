@@ -75,6 +75,23 @@ x=0 的 pending，便于区分软件 ring 历史与驱动 DMA 尚未入环的积
 | `type1_compare_direct_stages.m` | MATLAB 标准路径、MATLAB+C PHY、native-ring+C PHY 的阶段消融对照。 |
 | `type1_plot_pending_compare.m` | 读取两个 `pendingTrace` 结果，离线绘制单阶段与两阶段启动队列曲线。 |
 | `type1_build_rx_mex.m` | 编译 YunSDR 接收 MEX。 |
+| `type1_run_offline_baseline.m` | 不依赖板卡的 Phase-0：reference 到 BER 的完整 MATLAB 回归主干。 |
+
+## 离线研究主干（Phase 0）
+
+`type1_run_offline_baseline.m` 从共享 `nr4_type1_reference.mat` 的四层 TX
+波形出发，经可配置 4×4 平坦信道、共同 CFO、AWGN、4 倍采样和
+`type1_digital_switch` 的四相去交织，最后复用完整的
+`type1_analyze`（PSS、PBCH、Type-1 DM-RS、RZF、QPSK/BER）。它不访问
+YunSDR、无需 `sudo`，并保存 `captures/type1_offline_baseline_*/` 结果。
+
+默认配置是确定性高 SNR 的相干理想锚点；`userCfoHz`、
+`userTimingSamples`、`userPowerDb` 已作为每 layer 的受控注入接口预留，
+但默认都为零。该模型是基于四路全数字采样的**可控开关仿真**，不应被表述为
+物理单 RF 链 OTA 实现。
+
+可选环境变量 `TYPE1_OFFLINE_OUTPUT_ROOT` 指定离线结果目录。若实时 sudo
+测试使默认 `captures/` 对普通用户不可写，脚本会自动回退到 MATLAB 的用户临时目录。
 
 在 RX 服务器上编译并运行直接消费者：
 
@@ -228,6 +245,7 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `cmex-2026.07.13.1` -- 新增两阶段启动的软件 ring 丢弃、startup timestamp/sequence 审计与 pending 离线对比；实时星座图改为始终绘制均衡结果并移除 `NO SIGNAL` 覆盖；更新启动队列实测说明。
 - `cmex-2026.07.13.2` -- 修复 frame-PHY 死噪声输出；CFO 改为帧内连续相位，虚拟 RX 固定时偏由 DM-RS H 吸收；新增固定可校准 switch-phase 映射，完成 OTA grid/H/EVM/bit 等价验证。
 - `cmex-2026.07.13.3` -- 新增 `RUN_COMMANDS.md`，集中记录 sudo 板卡运行的可视化 `type1_rx_live` 与无图形 `type1_rx_direct` TX/RX 完整命令及所用空口波形。
+- `cmex-2026.07.13.4` -- 新增硬件无关的 Phase-0 离线主干：reference→独立用户损伤接口→4×4 信道/AWGN→四相数字开关→完整 MATLAB PSS/DM-RS/RZF/BER；明确其为全数字受控开关仿真锚点。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 

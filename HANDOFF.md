@@ -171,7 +171,26 @@ captures/type1_direct_20260713_171338/type1_direct_results.mat
 - 该门限仍控制 BER/覆盖率有效性，样本标记为 `no-signal-fast-gate`，不计为
   `decoded`。
 
-## 7. 关键文件与常用命令
+## 7. 已完成的离线研究 Phase 0
+
+`type1_run_offline_baseline.m` 是不依赖 YunSDR、MEX 接收机、sudo 或已采集 IQ
+的 reference-to-BER 回归主干：共享 reference 的四层波形经过每用户
+CFO/定时/功率接口、4×4 信道、AWGN 和 `type1_digital_switch` 四相去交织，后复用
+完整 `type1_analyze` 的 PSS、PBCH、Type-1 DM-RS、RZF 与 BER。
+
+默认相干理想锚点已在 RX 服务器以普通用户完成 3 帧验证：四层 BER 均为 0，平均
+EVM 为 `[2.718, 2.775, 2.714, 2.738]%`，共同 CFO 注入/估计为 `+850` /
+`+861…+864 Hz`。结果位于：
+
+```text
+/home/bupt/type1_offline_captures/type1_offline_baseline_20260713_233453/
+```
+
+该离线模型是四路全数字采样上的**受控开关仿真锚点**，不能表述为物理单 RF 链
+OTA 实现。`TYPE1_OFFLINE_OUTPUT_ROOT` 可指定普通用户可写的结果目录；默认
+`captures/` 若由历史 sudo 测试创建而不可写，脚本自动回退到 MATLAB 临时目录。
+
+## 8. 关键文件与常用命令
 
 | 文件 | 当前用途 |
 |---|---|
@@ -183,6 +202,9 @@ captures/type1_direct_20260713_171338/type1_direct_results.mat
 | `type1_validate_native_ring_grid.m` | native C grid 与 MATLAB CP-end grid 对照。 |
 | `type1_compare_direct_stages.m` | MATLAB/C PHY/native ring 分阶段数值对照。 |
 | `type1_plot_pending_compare.m` | 两个 pending 结果的离线对比图。 |
+| `type1_offline_sim_config.m` | Phase-0 可重复仿真配置与 Phase-1 每用户损伤接口。 |
+| `type1_offline_link.m` | reference 到信道/AWGN/四相开关虚拟 IQ 的纯 MATLAB 链路。 |
+| `type1_run_offline_baseline.m` | reference 到 BER 的完整纯 MATLAB 回归与结果保存。 |
 
 RX 编译：
 
@@ -204,11 +226,11 @@ TYPE1_DIRECT_DURATION_SEC=60 TYPE1_FIFO_RING_BLOCKS=2048 \
 captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 ```
 
-## 8. 提交记录维护规则
+## 9. 提交记录维护规则
 
 每次代码修改并提交时，必须同步在 `README.md` 的“提交变更记录”追加一行，
 格式为“版本 -- 主要变更”。当前记录：
 
 ```text
-cmex-2026.07.13.2 -- frame-PHY 噪声输出、帧内连续 CFO/DM-RS 吸收虚拟 RX 时偏、固定可校准 switch-phase 映射；OTA grid/H/EVM/bit 等价通过。
+cmex-2026.07.13.4 -- 新增硬件无关的 Phase-0 离线主干：reference→独立用户损伤接口→4×4 信道/AWGN→四相数字开关→完整 MATLAB PSS/DM-RS/RZF/BER；明确其为全数字受控开关仿真锚点。
 ```
