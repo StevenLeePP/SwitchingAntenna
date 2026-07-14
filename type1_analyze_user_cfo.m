@@ -3,6 +3,10 @@ function result = type1_analyze_user_cfo(rx30, package)
 %   Synchronization and common CFO come from the established full receiver.
 %   Residual CFO is estimated per layer from consecutive slot DM-RS channel
 %   phases, then applied as a time-varying column phase in the RZF channel.
+%   Adjacent 0.5 ms slots give a principal-angle unambiguous range of
+%   +/-1 kHz.  A warning is emitted well before that boundary; an exact
+%   integer multiple of the ambiguity range cannot be detected after phase
+%   wrapping and needs a different estimator/DM-RS spacing.
 
 assert(strcmp(package.channelCoding,'none'), ...
     'type1:UserCFOCoding','Current baseline is defined for uncoded QPSK.');
@@ -21,6 +25,7 @@ for s=1:nSlots
     hDmrs(:,:,:,s)=squeeze(channels{s}(:,cfg.dmrsTypeAPosition+1,:,:));
 end
 residual=zeros(1,cfg.nLayers); slotDt=cfg.frameDurationSec/cfg.slotsPerFrame;
+unambiguousCfoHz=1/(2*slotDt); warningCfoHz=0.75*unambiguousCfoHz;
 for p=1:cfg.nLayers
     phase=zeros(1,nSlots-1);
     for s=1:nSlots-1
@@ -28,6 +33,13 @@ for p=1:cfg.nLayers
         phase(s)=angle(sum(conj(a(:)).*b(:)));
     end
     residual(p)=median(phase)/(2*pi*slotDt);
+end
+if any(abs(residual)>=warningCfoHz)
+    warning('type1:UserCFOAmbiguity', ['Residual CFO estimate [%s] Hz is within ' ...
+        'the %.0f Hz guard of the +/-%.0f Hz adjacent-slot ambiguity range. ' ...
+        'Do not use this estimator for a wider-CFO claim without unwrapping ' ...
+        'or an additional time spacing.'], num2str(residual,'%.1f '), ...
+        warningCfoHz, unambiguousCfoHz);
 end
 lengths=package.ofdmInfo.SymbolLengths(:);
 % nrOFDMModulate may report one or two slots of symbol lengths.  The normal
@@ -59,5 +71,7 @@ for s=1:nSlots
 end
 result=struct('base',base,'residualCfoHz',residual,'rawBitErrors',errors, ...
     'rawBER',errors/package.nCodedBitsPerSlotLayer,'infoBitErrors',errors, ...
-    'infoBER',errors/package.nInfoBitsPerSlotLayer,'evmRMSPercent',evm);
+    'infoBER',errors/package.nInfoBitsPerSlotLayer,'evmRMSPercent',evm, ...
+    'residualCfoUnambiguousHz',unambiguousCfoHz, ...
+    'residualCfoWarningHz',warningCfoHz);
 end

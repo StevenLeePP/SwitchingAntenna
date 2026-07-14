@@ -10,7 +10,7 @@ function result = type1_analyze(rx30, package)
 %  6. Per-data-slot Type-1 DM-RS channel estimation with CDM OCC
 %  7. Per-RE nRx-by-nLayer RZF equalization (page-wise for speed)
 %  8. Hard decision + Viterbi decode + BER per slot/layer
-%  9. EVM and channel condition number statistics
+%  9. EVM and estimated-channel condition-number statistics
 %
 % Used by selftest and offline analysis. For live monitoring, use
 % type1_analyze_fast which decodes only one slot per update.
@@ -229,7 +229,10 @@ for s = 1:nSlots
     equalized = pagemldivide(regularized, matched);    % (H^H H+λI)^-1 H^H y
     postCompData(:, s, :) = permute(equalized, [3 2 1]);
 
-    % Channel condition numbers at sampled REs
+    % Condition numbers of the DM-RS-estimated channel Hhat at sampled REs.
+    % These are receiver diagnostics, not oracle condition numbers of the
+    % physical/composite channel.  In particular, interpolation error under
+    % a frequency-phase slope can change cond(Hhat) even if cond(H) does not.
     sampleCount = min(cfg.channelConditionSamplesPerSlot, nDataRE);
     sampleIndices = unique(round(linspace(1, nDataRE, sampleCount)));
     localCondition = zeros(1, numel(sampleIndices));
@@ -327,7 +330,8 @@ result.snrNullSignalPowerBySlot = snrNullSignalPowerBySlot;
 result.snrNullNoisePowerBySlot = snrNullNoisePowerBySlot;
 result.snrDmrsSignalPowerBySlot = snrDmrsSignalPowerBySlot;
 result.snrDmrsResidualPowerBySlot = snrDmrsResidualPowerBySlot;
-result.conditionNumbers = conditionNumbers;
+result.estimatedChannelConditionNumbers = conditionNumbers;
+result.conditionNumbers = conditionNumbers; % legacy alias: cond(Hhat)
 result.channelMatrixCenterBySlot = channelMatrixCenterBySlot;
 result.channelMatrixMagnitudeMeanBySlot = channelMatrixMagnitudeMeanBySlot;
 result.channelMatrixMean = mean(channelMatrixCenterBySlot, 3, 'omitnan');
@@ -339,11 +343,12 @@ result.channelMatrixMagnitudeMean = mean( ...
 result.channelMatrixTxRxMean = result.channelMatrixMean.';
 result.channelMatrixTxRxMagnitudeMean = result.channelMatrixMagnitudeMean.';
 if spatialDecodeEnabled
-    result.conditionStats = [median(conditionNumbers), ...
+    result.estimatedConditionStats = [median(conditionNumbers), ...
         prctile(conditionNumbers, 95), max(conditionNumbers)];
 else
-    result.conditionStats = [nan nan nan];
+    result.estimatedConditionStats = [nan nan nan];
 end
+result.conditionStats = result.estimatedConditionStats; % legacy alias: cond(Hhat)
 result.elapsedMs = 1e3 * toc(timer);
 end
 

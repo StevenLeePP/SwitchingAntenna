@@ -5,6 +5,14 @@ function report = type1_run_offline_multiuser()
 %   impairment-aware detector is introduced.
 
 sim = type1_offline_multiuser_config();
+% The adjacent-slot residual-CFO estimator is fundamentally ambiguous above
+% +/-1 kHz.  Keep this controlled baseline outside its 80%% guard so an
+% offline stress sweep cannot silently use an aliased compensation result.
+residualBudgetHz = sim.userCfoHz - mean(sim.userCfoHz);
+assert(max(abs(residualBudgetHz)) < 800, 'type1:UserCFOAmbiguity', ...
+    ['Configured differential CFO [%s] Hz exceeds the +/-800 Hz safety ' ...
+    'guard of the adjacent-slot estimator; use a wider-range estimator.'], ...
+    num2str(residualBudgetHz, '%.1f '));
 report = type1_run_offline_experiment(sim, 'multiuser');
 package=type1_load_package(); stream=RandStream('mt19937ar','Seed',sim.seed);
 compErrors=zeros(1,package.cfg.nLayers); compEvm=zeros(1,package.cfg.nLayers); estimates=zeros(sim.frames,package.cfg.nLayers);

@@ -28,7 +28,7 @@ heatmaps = struct;
 heatmaps.isolationRise = sweep2d('isolationRise', iso, rise, 'ber');
 heatmaps.cfoIsolation = sweep2d('cfoIsolation', twoD, iso, 'ber');
 heatmaps.powerIsolation = sweep2d('powerIsolation', twoD, iso, 'ber');
-heatmaps.timingIsolation = sweep2d('timingIsolation', twoD, iso, 'cond');
+heatmaps.timingIsolation = sweep2d('timingIsolation', twoD, iso, 'condHatP95');
 results = struct('profile',char(profile),'framesPerPoint',frames, ...
     'curves',curves,'heatmaps',heatmaps);
 out = output_dir(cfg, profile); save(fullfile(out,'phase1_sweeps.mat'),'results','-v7.3');
@@ -36,17 +36,17 @@ plot_results(results,out); fprintf('Phase-1 %s sweeps saved: %s\n',profile,out);
 
     function entry = sweep1d(name, values)
         entry = struct('values',values,'ber',zeros(size(values)),'evm',zeros(size(values)), ...
-            'condP95',zeros(size(values)),'failures',false(size(values)));
+            'estimatedCondP95',zeros(size(values)),'failures',false(size(values)));
         for i=1:numel(values)
             m=measure(apply_case(name,values(i)),i); entry.ber(i)=m.ber; entry.evm(i)=m.evm;
-            entry.condP95(i)=m.cond; entry.failures(i)=m.failure;
+            entry.estimatedCondP95(i)=m.condHatP95; entry.failures(i)=m.failure;
         end
     end
     function entry = sweep2d(name, x, y, metric)
         entry=struct('x',x,'y',y,'metric',metric,'values',nan(numel(y),numel(x)));
         for ix=1:numel(x), for iy=1:numel(y)
             m=measure(apply_case(name,[x(ix) y(iy)]),100+ix+10*iy);
-            if strcmp(metric,'ber'), entry.values(iy,ix)=m.ber; else, entry.values(iy,ix)=m.cond; end
+            if strcmp(metric,'ber'), entry.values(iy,ix)=m.ber; else, entry.values(iy,ix)=m.condHatP95; end
         end,end
     end
     function sim = apply_case(name,value)
@@ -67,17 +67,18 @@ plot_results(results,out); fprintf('Phase-1 %s sweeps saved: %s\n',profile,out);
         %#ok<NASGU> z
     end
     function m = measure(sim, seedOffset)
-        s=RandStream('mt19937ar','Seed',sim.seed+seedOffset); err=0; evm=0; cond=0; failure=false;
+        s=RandStream('mt19937ar','Seed',sim.seed+seedOffset); err=0; evm=0; condHat=0; failure=false;
         for f=1:sim.frames
             try
                 r=type1_analyze(type1_offline_link(package,sim,s).virtualRx30,package);
-                err=err+sum(r.infoBitErrors,'all'); evm=evm+mean(r.evmRMSPercent,'all'); cond=cond+r.conditionStats(2);
+                err=err+sum(r.infoBitErrors,'all'); evm=evm+mean(r.evmRMSPercent,'all'); condHat=condHat+r.estimatedConditionStats(2);
             catch exception
                 warning('type1:Phase1Sweep','Point failed: %s',exception.message); failure=true; err=NaN; break;
             end
         end
         nbits=sim.frames*numel(cfg.dataSlots)*package.nInfoBitsPerSlotLayer*cfg.nLayers;
-        m=struct('ber',max(err/nbits,1/nbits),'evm',evm/max(sim.frames,1),'cond',cond/max(sim.frames,1),'failure',failure);
+        m=struct('ber',max(err/nbits,1/nbits),'evm',evm/max(sim.frames,1), ...
+            'condHatP95',condHat/max(sim.frames,1),'failure',failure);
     end
 end
 

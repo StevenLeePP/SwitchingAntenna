@@ -98,7 +98,7 @@ YunSDR、无需 `sudo`，并保存 `captures/type1_offline_baseline_*/` 结果�
 `type1_offline_multiuser_config.m` 为四个 TX layer 分别注入 CFO、带限分数
 定时偏移、功率和独立 Wiener 相噪（参数单位为 rad/sample，尚未标定为某器件的
 dBc/Hz mask）。在固定场景 `[-350,125,620,-900] Hz` 的用户 CFO 下，现有仅估计
-共同 CFO 的接收机得到 BER `[0, 0.011, 0.272, 0.261]`；逐项消融表明差分 CFO 是
+共同 CFO 的接收机得到 BER `[0, 0.0136501, 0.2730664, 0.2586895]`；逐项消融表明差分 CFO 是
 主要来源，而 CP 内定时偏移、功率失衡和当前相噪强度本身未造成 BER。
 
 `type1_apply_switch_impairments.m` 以相干复泄漏矩阵表示隔离度，并以原始
@@ -108,13 +108,13 @@ dBc/Hz mask）。在固定场景 `[-350,125,620,-900] Hz` 的用户 CFO 下，�
 必须避免一个不合理结论：**固定且周期性的建立时间或静态隔离度，在四相去交织后
 是频率选择性的多相 LTI MIMO 变换，不会天然产生 ICI。** 当前 Type-1 DM-RS 会估计
 这一等效 H，RZF 因而可吸收大部分静态失真。32 dB SNR 下，25 dB/5 ns、15 dB/0 ns
-和近乎无泄漏/10 ns 的受控测试均为零误码，仅 EVM/条件数改变。只有时变建立时间、
+和近乎无泄漏/10 ns 的受控测试均为零误码，仅 EVM/估计条件数 `cond(Hhat)` 改变。只有时变建立时间、
 switch/ADC 时钟抖动、未知/失配的泄漏矩阵或不充分导频，才可合理地成为残余 ICI 或
 BER 恶化来源；后续曲线必须明确区分“已知且被 DM-RS 校准”的静态损伤与这些残余项。
 
 `type1_run_phase1_sweeps.m` 已实现六条单变量（隔离度、建立时间、差分 CFO、
 独立相噪、过渡时钟抖动、功率失衡）和四张二维图（隔离度×建立时间、差分
-CFO×隔离度、功率×隔离度、定时×隔离度的条件数）。`smoke` 配置以每点一帧
+CFO×隔离度、功率×隔离度、定时×隔离度的估计条件数 `cond(Hhat)`）。`smoke` 配置以每点一帧
 检查维度、复现性、失败标记和 PNG/MAT 输出；零误码点绘为 `1/Nbits` 上界，绝不
 伪造对数坐标零点。首个 smoke 结果位于
 `/home/bupt/type1_offline_captures/type1_phase1_smoke_20260714_000017/`：静态项和
@@ -125,9 +125,11 @@ CFO×隔离度、功率×隔离度、定时×隔离度的条件数）。`smoke` 
 审议修正已开始落实：二维 heatmap 的 `smoke` 网格已提升为至少 `3×3`，`pilot`
 网格为至少 `5×5`。新增 `type1_analyze_user_cfo.m`：以相邻 slot DM-RS 的信道
 相位估计每 layer 残余 CFO，并把相位演化放进 RZF 的每 layer 信道列；它不是对
-混合 RX 样本作不成立的“逐用户去旋”。固定独立用户场景下，Layer 3 BER 已由
-约 `0.272` 降至 `9.3e-4`，Layer 4 由约 `0.261` 降至 0；这是后续损伤感知接收机
-应比较的基础 CFO 补偿基线。
+混合 RX 样本作不成立的“逐用户去旋”。相邻 0.5 ms slot 的主值相位差仅有
+`±1 kHz` 无模糊范围，`|fhat|>=750 Hz` 会告警，离线压力场景若其已知差分 CFO
+超过 `±800 Hz` 则拒绝运行该补偿器；精确混叠仍不能由单一主值相位差检测。固定
+场景在 `TYPE1_OFFLINE_FRAMES=3`、seed `20260713` 下，补偿 BER 为
+`[0, 5.86559e-5, 9.48969e-4, 0]`，是后续损伤感知接收机应比较的基础基线。
 
 在 RX 服务器上编译并运行直接消费者：
 
@@ -287,7 +289,9 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `cmex-2026.07.14.2` -- 新增 `EXPERT_REVIEW.md`，集中说明远程/离线/OTA 运行命令、输出结构、已验证数据、统计限制、模型边界与核心代码职责，供专家审议；未提交。
 - `cmex-2026.07.14.3` -- 按专家审议将 smoke/pilot 二维网格提升至 3×3/5×5；新增基于跨 slot DM-RS 的逐用户残余 CFO 估计与时变 RZF 列相位补偿，建立可分离多用户 BER 基线；未提交。
 - `cmex-2026.07.14.4` -- 新增 3GPP TDL-A+Tx/Rx 指数相关离线信道与自由振荡 Wiener 相噪 dBc/Hz 锚定；OTA 25 dB/5 ns 交叉验证暴露现有 startup raw IQ 基线失效，已明确标记为未通过并要求重采有效 IQ；未提交。
-- `cmex-2026.07.14.5` -- 新增同一段 raw122 OTA IQ 的 ideal/25 dB+5 ns 成对注入桥接器：两支均经过 `type1_apply_switch_impairments` 和完整接收链，保存/打印 PSS、PBCH、BER、EVM、cond(H) 与配对差值；基线不合格时禁止将 OTA/离线增量称为交叉验证；未提交。
+- `cmex-2026.07.14.5` -- 新增同一段 raw122 OTA IQ 的 ideal/25 dB+5 ns 成对注入桥接器：两支均经过 `type1_apply_switch_impairments` 和完整接收链，保存/打印 PSS、PBCH、BER、EVM、`cond(Hhat)` 与配对差值；基线不合格时禁止将 OTA/离线增量称为交叉验证；未提交。
+- `cmex-2026.07.14.6` -- 新增 TX/RX 稳定后才落盘的 raw122 候选采集器，并以 PSS、PBCH/MIB 和 ideal EVM 质量门限筛选；完成同一 OTA IQ 的 25 dB/5 ns 配对注入，单点验证同步/BER 保持正常、`cond(Hhat)` 相对增量与离线同向，专家报告明确其为趋势验证而非绝对 EVM 校准；未提交。
+- `cmex-2026.07.14.7` -- 修正自由振荡 Wiener 相噪锚定 3 dB 系数；给跨 slot 残余 CFO 补偿加入 ±1 kHz 无模糊范围、750 Hz 告警和离线 ±800 Hz 防混叠门限；Phase-1 条件数统一标为估计量 `cond(Hhat)`，并以固定 3 帧/seed 重写多用户 BER 引用；未提交。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 

@@ -16,7 +16,7 @@ function report = type1_analyze_raw122_switch_pair(rawFile, options)
 %                           are still saved for diagnosis.
 %
 %   The report records PSS identity, PBCH CRC/MIB state, BER, EVM and
-%   cond(H) for both paths, prints a paired difference table, and saves a
+%   cond(Hhat) for both paths, prints a paired difference table, and saves a
 %   MAT file next to the raw IQ.  Use this before claiming an OTA impairment
 %   cross-validation result.
 
