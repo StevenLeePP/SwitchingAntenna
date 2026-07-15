@@ -1,7 +1,7 @@
 function report = type1_analyze_raw122_switch_pair(rawFile, options)
 %TYPE1_ANALYZE_RAW122_SWITCH_PAIR Paired ideal/impaired analysis of one OTA IQ.
 %   REPORT = TYPE1_ANALYZE_RAW122_SWITCH_PAIR() loads exactly one saved
-%   N-by-4 raw122 capture, then applies the ideal and 25 dB/5 ns switch
+%   N-by-4 raw122 capture, then applies the ideal and configured switch
 %   models to that *same* sample array.  It is intentionally a bridge
 %   between OTA raw IQ and type1_apply_switch_impairments; it does not make
 %   two independent RF captures.
@@ -10,6 +10,9 @@ function report = type1_analyze_raw122_switch_pair(rawFile, options)
 %     rawFile               absolute path, or a basename under data/
 %     options.isolationDb   default 25 dB
 %     options.settlingRiseNs default 5 ns
+%     options.transitionJitterStdPs default 0
+%     options.samplingBoundaryJitterStdPs default 0
+%     options.switchSeed default 20261500; required for nonzero jitter
 %     options.maxIdealEVMPercent default 20; quality gate only, not a model
 %                           parameter.  A failed gate forbids an OTA/sim
 %                           delta comparison, but the paired measurements
@@ -24,6 +27,9 @@ arguments
     rawFile = ""
     options.isolationDb (1,1) double {mustBeNonnegative} = 25
     options.settlingRiseNs (1,1) double {mustBeNonnegative} = 5
+    options.transitionJitterStdPs (1,1) double {mustBeNonnegative} = 0
+    options.samplingBoundaryJitterStdPs (1,1) double {mustBeNonnegative} = 0
+    options.switchSeed (1,1) double {mustBeInteger,mustBePositive} = 20261500
     options.maxIdealEVMPercent (1,1) double {mustBePositive} = 20
 end
 
@@ -36,17 +42,24 @@ idealModel = type1_offline_sim_config().switch;
 impairedModel = idealModel;
 impairedModel.isolationDb = options.isolationDb;
 impairedModel.settlingRiseNs = options.settlingRiseNs;
+impairedModel.transitionJitterStdPs = options.transitionJitterStdPs;
+impairedModel.samplingBoundaryJitterStdPs = options.samplingBoundaryJitterStdPs;
 
 fprintf('\n========== OTA raw122 paired switch injection ==========\n');
 fprintf('Raw IQ (shared by both paths): %s\n', rawFile);
 fprintf('Capture: %d samples x 4, %.3f ms at %.2f MS/s\n', ...
     size(raw122, 1), 1e3 * size(raw122, 1) / cfg.rxSampleRate, ...
     cfg.rxSampleRate / 1e6);
-fprintf('Paired models: ideal [Inf dB, 0 ns] versus impaired [%.1f dB, %.2f ns]\n', ...
-    options.isolationDb, options.settlingRiseNs);
+fprintf(['Paired models: ideal [Inf dB, 0 ns] versus impaired ' ...
+    '[%.1f dB, %.2f ns, transition %.1f ps, boundary %.1f ps], seed %d\n'], ...
+    options.isolationDb, options.settlingRiseNs, ...
+    options.transitionJitterStdPs,options.samplingBoundaryJitterStdPs, ...
+    options.switchSeed);
 
 [~, virtualIdeal, idealMeta] = type1_apply_switch_impairments(raw122, idealModel);
-[~, virtualImpaired, impairedMeta] = type1_apply_switch_impairments(raw122, impairedModel);
+switchStream=RandStream('mt19937ar','Seed',options.switchSeed);
+[~, virtualImpaired, impairedMeta] = type1_apply_switch_impairments( ...
+    raw122, impairedModel,switchStream);
 
 ideal = run_case('ideal', virtualIdeal, package);
 impaired = run_case('impaired', virtualImpaired, package);
@@ -59,6 +72,8 @@ fprintf('\n--- Paired result table (same OTA raw122) ---\n');
 disp(paired(:, ["analysisOK" "bestNID2" "expectedNID2" "pssNID2OK" ...
     "pbchCRCOK" "mibMatches" "pbchOK" "rawBER" "rawBitErrors" ...
     "meanEVMPercent" "condP95"]));
+fprintf('Ideal measured SNR [null, DM-RS] median = [%.2f, %.2f] dB.\n', ...
+    ideal.summary.snrNullDb,ideal.summary.snrDmrsDb);
 fprintf('--- Impaired - ideal metric deltas ---\n');
 disp(deltaTable);
 
@@ -112,6 +127,8 @@ summary = struct( ...
     'pbchOK', ~result.pbchCRCError && result.mibMatches, ...
     'timingOffsetSamples', result.timingOffset, ...
     'frequencyOffsetHz', result.frequencyOffsetHz, ...
+    'snrNullDb',median(result.snrNullDb,'all','omitnan'), ...
+    'snrDmrsDb',median(result.snrDmrsDb,'all','omitnan'), ...
     'sssMetric', result.sssMetric, ...
     'rawBER', mean(result.rawBER, 'all', 'omitnan'), ...
     'rawBitErrors', sum(result.rawBitErrors, 'all', 'omitnan'), ...
@@ -126,6 +143,7 @@ summary = struct('analysisOK', false, 'bestNID2', nan, 'expectedNID2', nan, ...
     'pssNID2OK', false, 'pssPeakMetric', nan, ...
     'pbchCRCOK', false, 'mibMatches', false, 'pbchOK', false, ...
     'timingOffsetSamples', nan, 'frequencyOffsetHz', nan, 'sssMetric', nan, ...
+    'snrNullDb',nan,'snrDmrsDb',nan, ...
     'rawBER', nan, 'rawBitErrors', nan, 'meanEVMPercent', nan, ...
     'condMedian', nan, 'condP95', nan, 'condMax', nan);
 end
@@ -153,7 +171,7 @@ end
 function x = read_complex_single_iq(file, nChannels)
 fid = fopen(file, 'rb');
 assert(fid >= 0, 'type1:OpenIQFile', 'Could not open %s.', file);
-cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
+cleanup = onCleanup(@() fclose(fid));
 raw = fread(fid, inf, 'single=>single');
 assert(mod(numel(raw), 2 * nChannels) == 0, 'type1:IQFileSize', ...
     'File length is not divisible by 2*nChannels: %s', file);

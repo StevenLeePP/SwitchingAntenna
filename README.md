@@ -312,6 +312,7 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `phase2-theme-3` -- 提交全栈 CFO/timing 感知集成、DDCE/约束核/received-drive 分解、R10–R14 TDL 边界与最终曲线。
 - `phase2-theme-4` -- 提交有界单极 RX-PLL、公共单 LO/独立 4-LO、CPE 连续展开与周跳/PSD 验证。
 - `phase2-theme-5` -- 提交复 PSS 相关、峰位投票、2/4 帧非相干累积及 100-seed acquisition waterfall/平台统计。
+- `phase2-theme-6` -- 提交 R15 三档 OTA 合格采集/同段注入/matched-SNR 与双口径审计，以及 Phase 2 审议、模型、复现和交接文档；EVM² no-go 保留，未打 freeze tag。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 

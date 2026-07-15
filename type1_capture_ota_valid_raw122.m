@@ -1,9 +1,13 @@
-function capture = type1_capture_ota_valid_raw122()
+function capture = type1_capture_ota_valid_raw122(options)
 %TYPE1_CAPTURE_OTA_VALID_RAW122 Capture a post-settle OTA IQ for pairing.
 %   Opens the existing four-RX stream, waits for TX/RX settling, and examines
 %   successive *raw122* snapshots through the ideal digital switch.  Only a
 %   snapshot with correct PSS identity, PBCH CRC/MIB, and normal ideal EVM is
 %   persisted.  This avoids using RX-startup IQ as an OTA model anchor.
+%
+%   Optional name-value fields:
+%     options.rxGain         default type1_config().rxGain
+%     options.fileTag        optional filesystem-safe campaign label
 %
 %   Environment controls:
 %     TYPE1_OTA_CAPTURE_SETTLE_SEC   default 5
@@ -11,8 +15,19 @@ function capture = type1_capture_ota_valid_raw122()
 %     TYPE1_OTA_CAPTURE_BLOCKS       default 20 (ms, must be >= 11)
 %     TYPE1_OTA_CAPTURE_MAX_EVM_PCT  default 20
 
+arguments
+    options.rxGain (1,1) double {mustBeFinite} = type1_config().rxGain
+    options.fileTag (1,1) string = ""
+end
+
+assert(options.rxGain >= 0 && options.rxGain <= 73, 'type1:OTARxGain', ...
+    'RX gain must be in the YunSDR-supported 0--73 dB range.');
+assert(strlength(options.fileTag)==0 || ...
+    ~isempty(regexp(char(options.fileTag),'^[A-Za-z0-9_-]+$','once')), ...
+    'type1:OTAFileTag','fileTag must contain only letters, digits, _ or -.');
 package = type1_load_package();
 cfg = package.cfg;
+cfg.rxGain = options.rxGain;
 settleSec = env_nonnegative('TYPE1_OTA_CAPTURE_SETTLE_SEC', 5);
 timeoutSec = env_positive('TYPE1_OTA_CAPTURE_TIMEOUT_SEC', 45);
 captureBlocks = round(env_positive('TYPE1_OTA_CAPTURE_BLOCKS', 20));
@@ -27,13 +42,13 @@ blockSamples = round(cfg.rxSampleRate * 1e-3);
 ringBlocks = max(cfg.liveRingBlocks, captureBlocks + 4);
 type1_yunsdr_rx_mex('open', cfg.deviceString, cfg.rxSampleRate, ...
     cfg.centerFrequencyHz, cfg.rxGain);
-cleanup = onCleanup(@close_radio); %#ok<NASGU>
+cleanup = onCleanup(@close_radio);
 type1_yunsdr_rx_mex('switchphase', cfg.switchPhaseOffset);
 type1_yunsdr_rx_mex('start', blockSamples, ringBlocks);
 
 fprintf('\n========== OTA post-settle raw122 capture ==========\n');
-fprintf('Settling %.1f s; then inspect %d ms snapshots for up to %.1f s.\n', ...
-    settleSec, captureBlocks, timeoutSec);
+fprintf(['RX gain %.1f dB; settling %.1f s; then inspect %d ms snapshots ' ...
+    'for up to %.1f s.\n'],cfg.rxGain,settleSec,captureBlocks,timeoutSec);
 pause(settleSec);
 deadline = tic;
 attempt = 0;
@@ -60,7 +75,7 @@ while toc(deadline) < timeoutSec
             pbchOK, evm, rawBER, valid);
         if valid
             capture = save_capture(raw122, timestamps, sequence, result, cfg, ...
-                settleSec, maxEVMPercent, attempt);
+                settleSec, maxEVMPercent, attempt, options.fileTag);
             fprintf('Accepted OTA raw122: %s\n', capture.raw122File);
             return;
         end
@@ -73,10 +88,12 @@ error('type1:OTACaptureQuality', ...
     'No PSS/PBCH/EVM-valid OTA raw122 was observed within %.1f s.', timeoutSec);
 end
 
-function capture = save_capture(raw122, timestamps, sequence, result, cfg, settleSec, maxEVMPercent, attempt)
+function capture = save_capture(raw122, timestamps, sequence, result, cfg, settleSec, maxEVMPercent, attempt, fileTag)
 if ~exist(cfg.dataRoot, 'dir'), mkdir(cfg.dataRoot); end
 stamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
-base = sprintf('type1_valid_ota_iq_%s_seq%u', stamp, sequence);
+if strlength(fileTag)>0,tag=['_' char(fileTag)];else,tag='';end
+base = sprintf('type1_valid_ota_iq_%s_gain%g%s_seq%u', ...
+    stamp,cfg.rxGain,tag,sequence);
 rawFile = fullfile(cfg.dataRoot, [base '_raw122_csingle_iq4.bin']);
 metaFile = fullfile(cfg.dataRoot, [base '_meta.mat']);
 write_complex_single_iq(rawFile, raw122);
@@ -84,6 +101,7 @@ capture = struct('raw122File', rawFile, 'metaFile', metaFile, ...
     'createdAt', datetime('now'), 'rawSampleRateHz', cfg.rxSampleRate, ...
     'durationSec', size(raw122, 1) / cfg.rxSampleRate, 'timestamps', timestamps, ...
     'sequence', sequence, 'attempt', attempt, 'settleSec', settleSec, ...
+    'rxGainDb',cfg.rxGain,'fileTag',fileTag, ...
     'maxIdealEVMPercent', maxEVMPercent, 'idealResult', result);
 save(metaFile, 'capture', '-v7.3');
 end
@@ -91,7 +109,7 @@ end
 function write_complex_single_iq(file, x)
 fid = fopen(file, 'wb');
 assert(fid >= 0, 'type1:OTACaptureWrite', 'Could not open %s.', file);
-cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
+cleanup = onCleanup(@() fclose(fid));
 x = single(x);
 packed = zeros(2 * numel(x), 1, 'single');
 packed(1:2:end) = real(x(:));
@@ -101,8 +119,14 @@ assert(fwrite(fid, packed, 'single') == numel(packed), ...
 end
 
 function close_radio()
-try, type1_yunsdr_rx_mex('stop'); catch, end
-try, type1_yunsdr_rx_mex('close'); catch, end
+try
+    type1_yunsdr_rx_mex('stop');
+catch
+end
+try
+    type1_yunsdr_rx_mex('close');
+catch
+end
 end
 
 function value = env_positive(name, defaultValue)

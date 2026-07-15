@@ -5,6 +5,21 @@
 本文记录当前已经实现、部署和测试过的状态；不包含后续研发计划。新会话应先读
 本文与 `README.md`，再改动工程。
 
+## 0. 专家协作与审计协议（长期有效）
+
+项目负责人是通信领域专家。每次研发改动必须遵守以下协议：
+
+1. 在 `EXPERT_REVIEW.md` 记录**改动内容、运行配置/seed、原始结果、可得结论及
+   结论边界**；负结果同样记录，不能以 EVM 或单点趋势替代 BER/统计结论。
+2. 在 `RUN_COMMANDS.md` 维护可复制的复现命令，说明命令运行的是 OTA 还是离线链路、
+   输入/输出是什么、以及必要的 sudo/远端连接条件。
+3. 每轮交付须给出简短的“做了什么—效果如何—下一步”概括；每次代码修改仍须在
+   `README.md` 的提交变更记录追加一行。
+4. 对专家意见先独立检查物理假设、标准定义、代码路径和可复现实验。若意见正确则
+   修正并验证；若与实现设计有实质冲突、缺少关键前提或发现意见不成立，必须暂停
+   扩展实现，提供证据和明确问题，待负责人答复后继续。不得为了顺从意见而写入
+   不被数据支持的结论。
+
 ## 1. 工程、分支与远端
 
 本地工程：
@@ -190,6 +205,17 @@ EVM 为 `[2.718, 2.775, 2.714, 2.738]%`，共同 CFO 注入/估计为 `+850` /
 OTA 实现。`TYPE1_OFFLINE_OUTPUT_ROOT` 可指定普通用户可写的结果目录；默认
 `captures/` 若由历史 sudo 测试创建而不可写，脚本自动回退到 MATLAB 临时目录。
 
+## 7.1 Phase 2 冻结边界（2026-07-15）
+
+R2--R14 的时变建立/边界抖动、AR(1) 相关时间、ICI-DF/soft 消融、器件包络、TDL
+多 realization、RX-LO/CPE、PSS acquisition 和开关代价归因均已完成，详细数字以
+`EXPERT_REVIEW.md` 为准。R15 又完成 25/30/35 dB 各 5 段合格 OTA raw122 与同参数
+matched-SNR 配对；15/15 EVM 增量同号且两支零误码。
+
+R15 目前不是无条件通过：预注册 EVM² 中位倍率 2.112，超过 2× 门；专家指令字面
+RMS-EVM 倍率 1.957。两个结果均冻结在正式 MAT，等待审议方裁定，所以尚未打
+`phase2-freeze-2026-07-15` tag，也不得把当前状态写成 Phase 2 已正式关闭。
+
 ## 8. 关键文件与常用命令
 
 | 文件 | 当前用途 |
@@ -205,6 +231,9 @@ OTA 实现。`TYPE1_OFFLINE_OUTPUT_ROOT` 可指定普通用户可写的结果目
 | `type1_offline_sim_config.m` | Phase-0 可重复仿真配置与 Phase-1 每用户损伤接口。 |
 | `type1_offline_link.m` | reference 到信道/AWGN/四相开关虚拟 IQ 的纯 MATLAB 链路。 |
 | `type1_run_offline_baseline.m` | reference 到 BER 的完整纯 MATLAB 回归与结果保存。 |
+| `type1_run_phase2_r15_capture_campaign.m` | 三档 gain、多段 PSS/PBCH/EVM-gated raw122 采集。 |
+| `type1_run_phase2_r15_ota_cross_validation.m` | 同 raw122 损伤配对与 matched-SNR TDL 门。 |
+| `type1_audit_phase2_r15_metrics.m` | EVM² 与 RMS-EVM 双口径不覆盖审计。 |
 
 RX 编译：
 
