@@ -313,6 +313,7 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `phase2-theme-4` -- 提交有界单极 RX-PLL、公共单 LO/独立 4-LO、CPE 连续展开与周跳/PSD 验证。
 - `phase2-theme-5` -- 提交复 PSS 相关、峰位投票、2/4 帧非相干累积及 100-seed acquisition waterfall/平台统计。
 - `phase2-theme-6` -- 提交 R15 三档 OTA 合格采集/同段注入/matched-SNR 与双口径审计，以及 Phase 2 审议、模型、复现和交接文档；EVM² no-go 保留，未打 freeze tag。
+- `cmex-2026.07.15.23` -- R15 最终裁决定死预注册 EVM²，2.112× ratio no-go，不采纳 RMS 的1.957×；三档 gain 归并为33–43dB高SNR单簇，OTA主张缩放为15段功能+趋势验证并记录离线模型偏乐观约2×，明确禁用“多SNR标定通过”；Phase 2 按真实no-go状态关闭并创建带说明的freeze tag。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 

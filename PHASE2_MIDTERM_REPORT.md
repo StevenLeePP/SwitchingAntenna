@@ -139,11 +139,11 @@ waterfall/平台/多帧累积，R14 已完成开关代价归因和 TDL paper-sto
 PSS/PBCH 合格且理想/损伤两支均为零误码，EVM 增量方向与 matched-SNR 离线预测
 15/15 一致。
 
-收官门目前存在待裁决边界：项目预注册的 EVM² 增量中位倍率为 2.112，略超 2×，
-因此 `acceptancePassed=false`；专家指令字面的 RMS-EVM 增量倍率为 1.957，满足 2×。
-为避免事后选择指标，两个结果同时冻结，Phase 2 暂不打 freeze tag。除这个语义裁决外，
-Phase 2 代码与实验资产已齐备；Phase 3 端口选择/BABF 仍保持独立，不借此边界结果提前
-启动。
+最终裁决定死预注册 EVM²：增量中位倍率 2.112 超过 2×，`acceptancePassed=false`；
+RMS-EVM 的 1.957 仅保留为凹压缩审计，不用于救门。三档 gain 的实测 SNR 全部重叠在
+33--43 dB，因此 R15 缩放为“高 SNR 单簇功能+趋势验证，离线模型偏乐观约 2×”，
+明确不是多 SNR 定量标定。Phase 2 以该 no-go 和缩放主张正式关闭并冻结；Phase 3
+端口选择/BABF 另起，不回改本轮结果。
 
 | 收官资产 | 位置/入口 | 状态 |
 |---|---|---|
@@ -152,4 +152,4 @@ Phase 2 代码与实验资产已齐备；Phase 3 端口选择/BABF 仍保持独�
 | R14 TDL/归因 | `type1_run_phase2_r14_*` | 完成 |
 | R15 OTA capture | `type1_run_phase2_r15_capture_campaign.m` | 15 段完成 |
 | R15 配对/matched-SNR | `type1_run_phase2_r15_ota_cross_validation.m` | EVM² 门 no-go |
-| R15 双口径审计 | `type1_audit_phase2_r15_metrics.m` | 待审议语义裁决 |
+| R15 双口径审计 | `type1_audit_phase2_r15_metrics.m` | EVM² no-go 裁决完成 |
