@@ -308,6 +308,7 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `cmex-2026.07.15.21` -- 按 R14 新增 100-seed 理想开关 on 归因，off/ideal/impaired PSS 成功为 75/76/52，证明交织结构净差 −1pp 不显著而已建模模拟损伤贡献 24pp（25/1，p=8.05e-7）；完成满足 paper-stop 的 TDL 多 realization Q/迭代/SNR/器件包络与集成边界图，Q12/3次 soft DF 在 20dB 将 BER 0.16567→0.16046（相对 3.15%，9/10 seed 改善），i.i.d./8ns 区域轻微反噬、1µs 峰值恢复约3.6%，全部 acquisition outage=0；默认实时接收机与 B 线冻结不变，未提交。
 - `cmex-2026.07.15.22` -- R15 新增可指定 rxGain/标签的合格 raw122 采集、25dB/20ns/20ps/100ps 同段成对注入、逐段 matched-SNR TDL 预测与双 EVM 口径审计；实采 25/30/35dB 各5段，15/15 PSS/PBCH 合格、ideal/impaired 均零误码且增量同号，EVM² OTA/离线中位倍率2.112略超2×门，而专家字面 RMS-EVM 倍率1.957通过，故保留 `adjudicationRequired`、暂不打 Phase 2 freeze tag。
 - `phase2-theme-1` -- 提交离线 reference→TDL/AWGN→时变开关主干、AR(1) 建立抖动/边界位移、真值重放与 genie 上界基础设施。
+- `phase2-theme-2` -- 提交空间白化负基线、逐符号 ICI-DF、hard/soft/迭代统计与器件规格包络实验族。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 
