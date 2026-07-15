@@ -311,6 +311,7 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `phase2-theme-2` -- 提交空间白化负基线、逐符号 ICI-DF、hard/soft/迭代统计与器件规格包络实验族。
 - `phase2-theme-3` -- 提交全栈 CFO/timing 感知集成、DDCE/约束核/received-drive 分解、R10–R14 TDL 边界与最终曲线。
 - `phase2-theme-4` -- 提交有界单极 RX-PLL、公共单 LO/独立 4-LO、CPE 连续展开与周跳/PSD 验证。
+- `phase2-theme-5` -- 提交复 PSS 相关、峰位投票、2/4 帧非相干累积及 100-seed acquisition waterfall/平台统计。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 
