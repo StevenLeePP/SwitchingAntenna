@@ -1,4 +1,4 @@
-function result = type1_analyze(rx30, package)
+function result = type1_analyze(rx30, package, pssMode)
 %TYPE1_ANALYZE Full-frame sync, Type-1 DM-RS estimation, RZF and BER.
 %
 % Processing chain (all 19 data slots):
@@ -18,7 +18,11 @@ function result = type1_analyze(rx30, package)
 arguments
     rx30 {mustBeNumeric}       % [N x 4] 30.72 MS/s virtual RF
     package (1,1) struct        % shared TX/RX reference
+    pssMode (1,1) string = "combined"
 end
+pssMode=lower(pssMode);
+assert(any(pssMode==["combined" "vote"]),'type1:PSSMode', ...
+    'pssMode must be combined or vote.');
 cfg = package.cfg;
 nRxChannels = size(rx30, 2);
 assert(nRxChannels >= 1, 'At least one RX channel is required.');
@@ -62,6 +66,25 @@ for nid2 = 0:2
 end
 [~, bestPSSIndex] = max(pssMetrics);                      % pick best NID2
 timingOffset = pssPeakIndices(bestPSSIndex);
+pssVoteUsedFallback=false; pssChainPeakIndices=nan(nRxChannels,3);
+pssChainMetrics=nan(nRxChannels,3);
+if pssMode=="vote"
+    for r=1:nRxChannels
+        for nid2=0:2
+            localSSB=complex(zeros(240,4)); localSSB(nrPSSIndices)=nrPSS(nid2);
+            referenceGrid=complex(zeros(nSC,cfg.symbolsPerSlot));
+            referenceGrid(ssbSC,ssbSym)=localSSB;
+            [offset,magnitude]=nrTimingEstimate(carrier,rx30(:,r),referenceGrid, ...
+                'Nfft',cfg.nfft,'SampleRate',cfg.txSampleRate,'CarrierFrequency',0);
+            pssChainPeakIndices(r,nid2+1)=offset;
+            pssChainMetrics(r,nid2+1)=max(abs(magnitude).^2,[],'all');
+        end
+    end
+    [timingOffset,voteNid2,pssVoteUsedFallback]=select_pss_vote( ...
+        pssChainPeakIndices,pssChainMetrics,timingOffset,bestPSSIndex-1, ...
+        max(package.ofdmInfo.CyclicPrefixLengths),frameSamples);
+    bestPSSIndex=voteNid2+1;
+end
 
 % Adjust timing offset into the captured window to extract a full frame
 pssModuloOffsets = mod(pssPeakIndices - timingOffset + ...
@@ -298,6 +321,10 @@ result.pssPeakIndices = pssPeakIndices;
 result.pssModuloOffsets = pssModuloOffsets;
 result.pssMetrics = pssMetrics;
 result.bestNID2 = bestPSSIndex - 1;
+result.pssAcquisitionMode = pssMode;
+result.pssVoteUsedFallback = pssVoteUsedFallback;
+result.pssChainPeakIndices = pssChainPeakIndices;
+result.pssChainMetrics = pssChainMetrics;
 result.expectedNID2 = mod(cfg.pci, 3);
 result.frequencyOffsetHz = frequencyOffsetHz;
 result.cpCorrelation = cpCorrelation;
@@ -350,6 +377,28 @@ else
 end
 result.conditionStats = result.estimatedConditionStats; % legacy alias: cond(Hhat)
 result.elapsedMs = 1e3 * toc(timer);
+end
+
+function [timingOffset,nid2,usedFallback]=select_pss_vote(peak,metric,combinedOffset,combinedNid2,tolerance,frameSamples)
+nRx=size(peak,1); chainNid=zeros(nRx,1); chainPeak=zeros(nRx,1); chainMetric=zeros(nRx,1);
+for r=1:nRx
+    [chainMetric(r),index]=max(metric(r,:)); chainNid(r)=index-1; chainPeak(r)=peak(r,index);
+end
+bestScore=-inf; bestCluster=[];
+for r=1:nRx
+    distance=abs(mod(chainPeak-chainPeak(r)+frameSamples/2,frameSamples)-frameSamples/2);
+    cluster=find(distance<=tolerance & chainNid==chainNid(r));
+    if numel(cluster)>=2
+        score=sum(chainMetric(cluster));
+        if score>bestScore, bestScore=score; bestCluster=cluster; end
+    end
+end
+if isempty(bestCluster)
+    timingOffset=combinedOffset; nid2=combinedNid2; usedFallback=true;
+else
+    [~,local]=max(chainMetric(bestCluster)); chosen=bestCluster(local);
+    timingOffset=chainPeak(chosen); nid2=chainNid(chosen); usedFallback=false;
+end
 end
 
 %% ═══ Local: CP-based fine CFO estimator ═══
