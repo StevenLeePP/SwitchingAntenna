@@ -310,6 +310,7 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `phase2-theme-1` -- 提交离线 reference→TDL/AWGN→时变开关主干、AR(1) 建立抖动/边界位移、真值重放与 genie 上界基础设施。
 - `phase2-theme-2` -- 提交空间白化负基线、逐符号 ICI-DF、hard/soft/迭代统计与器件规格包络实验族。
 - `phase2-theme-3` -- 提交全栈 CFO/timing 感知集成、DDCE/约束核/received-drive 分解、R10–R14 TDL 边界与最终曲线。
+- `phase2-theme-4` -- 提交有界单极 RX-PLL、公共单 LO/独立 4-LO、CPE 连续展开与周跳/PSD 验证。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 
