@@ -17,7 +17,9 @@ report = type1_run_offline_experiment(sim, 'multiuser');
 package=type1_load_package(); stream=RandStream('mt19937ar','Seed',sim.seed);
 compErrors=zeros(1,package.cfg.nLayers); compEvm=zeros(1,package.cfg.nLayers); estimates=zeros(sim.frames,package.cfg.nLayers);
 for frame=1:sim.frames
-    compensated=type1_analyze_user_cfo(type1_offline_link(package,sim,stream).virtualRx30,package);
+    frameSim=sim; frameSim.switch.timeOriginSec=sim.switch.timeOriginSec + ...
+        (frame-1)*package.cfg.frameDurationSec;
+    compensated=type1_analyze_user_cfo(type1_offline_link(package,frameSim,stream).virtualRx30,package);
     compErrors=compErrors+sum(compensated.infoBitErrors,1); compEvm=compEvm+mean(compensated.evmRMSPercent,1);
     estimates(frame,:)=compensated.residualCfoHz;
 end

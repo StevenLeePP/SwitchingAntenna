@@ -26,7 +26,10 @@ fprintf('frames=%d SNR=%.1f dB commonCFO=%+.1f Hz userCFO=[%s] Hz switch=[IS=%g 
     sim.frames, sim.snrDb, sim.commonCfoHz, num2str(sim.userCfoHz), ...
     sim.switch.isolationDb, sim.switch.settlingRiseNs);
 for frame = 1:sim.frames
-    link = type1_offline_link(package, sim, stream);
+    frameSim = sim;
+    frameSim.switch.timeOriginSec = sim.switch.timeOriginSec + ...
+        (frame - 1) * cfg.frameDurationSec;
+    link = type1_offline_link(package, frameSim, stream);
     result = type1_analyze(link.virtualRx30, package);
     infoErrors(frame, :) = sum(result.infoBitErrors, 1);
     codedErrors(frame, :) = sum(result.codedBitErrors, 1);

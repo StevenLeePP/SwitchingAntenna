@@ -292,6 +292,22 @@ captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
 - `cmex-2026.07.14.5` -- 新增同一段 raw122 OTA IQ 的 ideal/25 dB+5 ns 成对注入桥接器：两支均经过 `type1_apply_switch_impairments` 和完整接收链，保存/打印 PSS、PBCH、BER、EVM、`cond(Hhat)` 与配对差值；基线不合格时禁止将 OTA/离线增量称为交叉验证；未提交。
 - `cmex-2026.07.14.6` -- 新增 TX/RX 稳定后才落盘的 raw122 候选采集器，并以 PSS、PBCH/MIB 和 ideal EVM 质量门限筛选；完成同一 OTA IQ 的 25 dB/5 ns 配对注入，单点验证同步/BER 保持正常、`cond(Hhat)` 相对增量与离线同向，专家报告明确其为趋势验证而非绝对 EVM 校准；未提交。
 - `cmex-2026.07.14.7` -- 修正自由振荡 Wiener 相噪锚定 3 dB 系数；给跨 slot 残余 CFO 补偿加入 ±1 kHz 无模糊范围、750 Hz 告警和离线 ±800 Hz 防混叠门限；Phase-1 条件数统一标为估计量 `cond(Hhat)`，并以固定 3 帧/seed 重写多用户 BER 引用；未提交。
+- `cmex-2026.07.14.8` -- 启动 Phase 2 A1/A2：开关模型新增 `tau(t)` 慢漂/快抖和独立采样边界亚样点抖动（零抖动严格恒等、越界高斯尾部显式计数截断）；新增代数回归及固定 seed 时变损伤扫描入口，慢漂、快抖和边界抖动分开报告；未提交。
+- `cmex-2026.07.14.9` -- 新增 DM-RS 残差协方差加权（预白化等价）RZF 与理想链路退化回归；首个快抖点的空间白化未带来可测 BER 增益，已记录为负基线，后续需建模跨符号/频率 ICI 协方差而非宣称算法已恢复；未提交。
+- `cmex-2026.07.14.10` -- 按频域残差诊断将快抖由 raw-sample i.i.d. 扩展为可配置 AR(1)/OU 相关时间；记录 τ 下限触发比例，新增已知 β 的 genie IIR 逆滤波上界和 `0/8 ns/100 ns/1 µs` 相关性扫描。DM-RS in-sample 残差白化保留为负基线，后续仅在可测带状 ICI 下研究交叉验证协方差/MMSE；未提交。
+- `cmex-2026.07.14.11` -- 按 R3 撤回 100 ns“已出现结构”的表述，带状 MMSE 降级为预期 0.002 dB 的负对照；新增 τc=1 µs 每符号共享 ICI 核的偶/奇交叉拟合判决反馈消除、理想退化回归与标准/DF/genie 三方 MAT 报告，获得首个正向 BER 恢复基线；未提交。
+- `cmex-2026.07.14.12` -- 按 R4 新增 ICI-DF 的原始观测重构式 1--3 次迭代、严格成对 Q/迭代/SNR 统计扫描和 PSS 获取失败留痕；paper 档在多 seed 下确认 Q=6/12/24 的 BER 降低 36.9/47.9/53.2%、3 次迭代 η=0.795，并区分可同步区间内 DF 近零收益与 −10--−8 dB PSS 门限；未提交。
+- `cmex-2026.07.14.13` -- 按 R5/R6 显式区分首轮硬判决与后续 soft/hard DF，完成 hard-vs-soft 消融（soft 额外降低约 8.5%）；新增 20 dB fast-jitter×τc 规格包络及 τc=1 µs 加密点，修正 BER≤1e-2 的保守容限放宽为 >1.25×（插值约 1.3×，非 1.5×），并记录 floor 截断与零错 95% 上界；未提交。
+- `cmex-2026.07.14.14` -- 按 R7 实现 CFO 相位斜坡感知的组合 soft-DF、只替换新增动态 beta 的 L3 genie、L0--L3 阶梯、8-seed TDL-A paired-bootstrap 与预注册 go/no-go；pilot 中 4/8 seed 采集失败且有效 seed 的 gap closure 全为负，严格判定 no-go、未启动 paper，并保存信道病态/per-user timing 诊断；未提交。
+- `cmex-2026.07.14.15` -- 按 R8 新增两段式逐用户 timing 去斜/重估信道、主/压力场景、中断及 PSS/NID2/PBCH 审计，并修复组合 DF 首轮判决误用旧接收路径；压力 seed 的 `cond(Hhat)` 中位 106.4→59.0、平均 BER 25.7%→3.21%，主场景 5 个有效 seed 的 L0/L1/L2/L3 中位为 0.516/1.845/1.777/0.516%，但 gap closure 中位仅 3.54%、3/8 假峰中断，故仍为 no-go、未运行 paper；未提交。
+- `cmex-2026.07.14.16` -- 按 R9/R10 新增同 TDL/开关 realization 的逐 layer 真值重放与四支分解：双 bank 真值捕获 47.5/51.3% 验证跨相位模型缺项，判决污染非主导、data-aided 对角 HTrue 支为最大上界，H2 双 seed 门禁未过故禁止反功率 LS；实际 50 系数双 bank BER 反而恶化而不保留；核验现有 PSS 已做四链非相干合并，成功数 5/8 与最佳固定单链相同且仍有假峰；未提交。
+- `cmex-2026.07.14.17` -- 按 R11 实现 DDCE 数据判决引导信道重估、Q=12 下 100→25 real DOF 的共轭对称物理 B 核、二者门控组合及可选 PSS 峰位投票；DDCE 两 seed BER/EVM 均改善但 gap 增量仅 1.6/4.5pp 未过门，真值 constrained B 以 <0.5pp 捕获损失通过，但实际状态代理使 physical/组合 BER 反噬而拒绝保留；PSS 投票由 5/8 提至 6/8 并通过 smoke、默认仍为原 combined；未提交。
+- `cmex-2026.07.15.18` -- 按 Phase 2 中期 R11 收束实现仅依赖 stitched ADC 与名义 beta0 的 received-drive 共轭核：20 dB 真值 capture 63.65/64.35%，实际 BER 两 seed 均改善但 gap 增量 8.78/32.60pp 因第一点未达 10pp 而严格冻结 B 线；完成 PSS 30-seed×3-SNR 配对，vote 18/19/19 对 combined 17/17/17 但 McNemar p=1/0.5/0.5 不显著，故保持可选而不升默认；未提交。
+- `cmex-2026.07.15.19` -- 按 R12 新增独立随机流的有界 OU/单极 RX-PLL、开关后公共单 LO/开关前独立 4-LO 注入及每符号一参数 CPE；四项恒等/PSD 回归通过，5×3 paper-stop 网格否定“公共 LO 必然更低 BER/自动放宽规格”，但确认独立+CPE 增量 EVM 功率随相位方差缩放（R2=0.990--0.992）及公共状态 oracle 可完全恢复；保留 memoryless 周跳审计并以 DM-RS 锚定连续展开修正正式 CPE，温和栈单点不重开 B 线；未提交。
+- `cmex-2026.07.15.20` -- 按 R13 新增与 `nrTimingEstimate` 机器精度等价的复 PSS 相关、100-seed×11-SNR acquisition-only 配对统计、Wilson/McNemar 及 falsePeak/miss/windowClip 审计；单帧在 8--26 dB 呈 52% realization 平台，4 帧非相干累积在 20/26 dB 提至 70% 且显著但仍有假峰天花板；20 dB switch-off/on 为 75/52、配对 24/1（p=1.55e-6），量化经开关同步净代价；默认实时获取器未改，未提交。
+- `cmex-2026.07.15.21` -- 按 R14 新增 100-seed 理想开关 on 归因，off/ideal/impaired PSS 成功为 75/76/52，证明交织结构净差 −1pp 不显著而已建模模拟损伤贡献 24pp（25/1，p=8.05e-7）；完成满足 paper-stop 的 TDL 多 realization Q/迭代/SNR/器件包络与集成边界图，Q12/3次 soft DF 在 20dB 将 BER 0.16567→0.16046（相对 3.15%，9/10 seed 改善），i.i.d./8ns 区域轻微反噬、1µs 峰值恢复约3.6%，全部 acquisition outage=0；默认实时接收机与 B 线冻结不变，未提交。
+- `cmex-2026.07.15.22` -- R15 新增可指定 rxGain/标签的合格 raw122 采集、25dB/20ns/20ps/100ps 同段成对注入、逐段 matched-SNR TDL 预测与双 EVM 口径审计；实采 25/30/35dB 各5段，15/15 PSS/PBCH 合格、ideal/impaired 均零误码且增量同号，EVM² OTA/离线中位倍率2.112略超2×门，而专家字面 RMS-EVM 倍率1.957通过，故保留 `adjudicationRequired`、暂不打 Phase 2 freeze tag。
+- `phase2-theme-1` -- 提交离线 reference→TDL/AWGN→时变开关主干、AR(1) 建立抖动/边界位移、真值重放与 genie 上界基础设施。
 
 ### `cmex-2026.07.13.2` 详细变更与验证
 
