@@ -901,3 +901,110 @@ git diff --stat phase2-freeze-2026-07-15..phase3-freeze-2026-07-16
 冻结 tag 应包含平台/枚举、选择算法、全栈 AMC、理论、能效和文档审议六个主题提交。
 R16--R22 验证命令仍按本文件相应章节运行；tag 不包含远端大体积 MAT/raw IQ，只保存
 代码、正式路径、SHA-256、统计量和图片。
+
+## 技术手册引用数据的复现说明
+
+`TECHNICAL_MANUAL.md` 不产生新的实验资产，它把已经冻结的 Phase 0--3 结果按论文逻辑
+重新组织。实时数据对应本文件 direct RX 章节；Phase 1/2 数据对应 R1--R15；M>N 端口
+选择、理论和能效数据对应 R16--R22。复现某个表格时应运行相应 R 编号的正式命令并读取
+指定 MAT，不能把手册中的排版表格当作新的原始数据源。
+
+手册本身的结构和本地资源检查可执行：
+
+```bash
+git diff --check -- TECHNICAL_MANUAL.md README.md EXPERT_REVIEW.md RUN_COMMANDS.md
+python3 - <<'PY'
+from pathlib import Path
+import re
+p=Path('TECHNICAL_MANUAL.md')
+s=p.read_text()
+missing=[]
+for m in re.finditer(r'!?\[[^]]*\]\(([^)]+)\)',s):
+    target=m.group(1).split('#')[0]
+    if target and '://' not in target and not (p.parent/target).exists():
+        missing.append(target)
+assert not missing, missing
+assert s.count('$$') % 2 == 0
+assert s.count('```') % 2 == 0
+print('TECHNICAL_MANUAL structure: PASS')
+PY
+```
+
+该命令只验证 Markdown、公式分隔符和仓库内图片/文档链接，不重新验证无线实验；无线数据
+仍以相应 R 编号的 MATLAB 命令、正式 MAT 和 SHA-256 为准。
+
+## 投稿前 E1--E3 补充实验
+
+这三项均为 RX 服务器上的纯 MATLAB/离线统计，不访问板卡、不要 `sudo`。从本机经跳板
+连接 RX：
+
+```bash
+ssh -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+mkdir -p /home/bupt/type1_paper_supplements
+```
+
+先做代数门和 smoke。E1 的独特之处是用真实 DM-RS 扫描帧估计 M 端口 CSI，再与读取
+TDL 真值的同算法参考成对；E2 是单用户 J0 相关端口的最强单端口选择，不做相干合并；
+E3 是扫描周期到 Clarke/Jakes 移动速度的纯解析映射。
+
+```bash
+TYPE1_E1_PROFILE=smoke TYPE1_E2_PROFILE=smoke \
+TYPE1_PAPER_OUTPUT_ROOT=/home/bupt/type1_paper_supplements \
+  /home/bupt/tools/matlab/bin/matlab -batch \
+  "type1_validate_paper_e1_online_selection; type1_run_paper_e1_online_selection; type1_run_paper_e2_fas_diversity; type1_run_paper_e3_mobility_mapping"
+```
+
+正式运行冻结 E1 的 20 个 TDL seed、E2 的 100000 realization 和 E3 的完整周期表：
+
+```bash
+TYPE1_E1_PROFILE=paper TYPE1_E2_PROFILE=paper \
+TYPE1_PAPER_OUTPUT_ROOT=/home/bupt/type1_paper_supplements \
+  /home/bupt/tools/matlab/bin/matlab -batch \
+  "type1_run_paper_e1_online_selection; type1_run_paper_e2_fas_diversity; type1_run_paper_e3_mobility_mapping"
+```
+
+正式资产：
+
+```text
+/home/bupt/type1_paper_supplements/type1_paper_e1_paper_20260716_111405/
+/home/bupt/type1_paper_supplements/type1_paper_e2_paper_20260716_111306/
+/home/bupt/type1_paper_supplements/type1_paper_e3_20260716_111307/
+```
+
+读取头条量：
+
+```matlab
+a=load('/home/bupt/type1_paper_supplements/type1_paper_e1_paper_20260716_111405/paper_e1_online_selection.mat');
+disp(a.report.summary.medianRetention)       % [0.9017 0.7882 0.8545]
+disp(a.report.summary.estimatedAmcGain)      % [0.1859 0.3943 0.3524]
+disp(a.report.summary.successCount)          % [20 18 18 18 19 19 17]
+b=load('/home/bupt/type1_paper_supplements/type1_paper_e2_paper_20260716_111306/paper_e2_fas_diversity.mat');
+disp(b.report.snrGainDbAtTargetOutage(:,end)) % [10.5987;12.0400;12.5759] dB
+c=load('/home/bupt/type1_paper_supplements/type1_paper_e3_20260716_111307/paper_e3_mobility_mapping.mat');
+disp(c.report.mapping)
+```
+
+E1 的第一次 smoke 未去嵌 reference 的逐层 0.72 峰值缩放，H NMSE 约 `+9--10 dB`；
+该运行已明确作废，不得引用。正式实现只用共享 `txGrid/txWaveform` 去嵌该已知比例，
+`usesTrueChannel=false`、`settlingTruthCorrected=false`。
+
+E1 fresh 逐字段复现：
+
+```matlab
+a=load('/home/bupt/type1_paper_supplements/type1_paper_e1_paper_20260716_110222/paper_e1_online_selection.mat');
+b=load('/home/bupt/type1_paper_supplements/type1_paper_e1_paper_20260716_111405/paper_e1_online_selection.mat');
+names={'validation','objectiveDb','hNmseDb','retention','schedule','scanMeta','data'};
+same=false(size(names));
+for k=1:numel(names),same(k)=isequaln(a.report.(names{k}),b.report.(names{k}));end
+disp(same) % [1 1 1 1 1 1 1]
+```
+
+第二次 E1 正式 MAT/PNG SHA-256 分别为
+`930796c9...220ae` / `80a05deb...2686`；E2 为
+`bc505fea...9457` / `e8bde885...6154`；E3 为
+`9e00991b...defe` / `74f993c3...6e53`。完整 SHA 见 `EXPERT_REVIEW.md` §47。
+
+E2/E3 fresh 目录分别为 `.../type1_paper_e2_paper_20260716_112710/` 和
+`.../type1_paper_e3_20260716_112712/`；E2 的八个科学字段、E3 的四个科学字段逐项
+`isequaln` 均为 1，比较字段名和结果留痕见 `EXPERT_REVIEW.md` §47.5。

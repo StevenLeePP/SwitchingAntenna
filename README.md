@@ -25,12 +25,22 @@ M12/M16 净增益为 `+0.614/+0.710 bit/s/Hz`，Gate 3 重测通过；同步感�
 `phase3-freeze-2026-07-16`。该 tag 表示 R16--R22 代码、正式资产索引、负结果和边界均
 已闭环，不表示 oracle 选择器已经成为在线实现或能效已经过实物功率计验证。
 
+Phase 3 freeze 后的投稿补充 E1--E3 已由 R23 审议通过但尚未形成新 tag：20-seed DM-RS 扫描估计
+选择保留 truth-CSI 贪婪参考中位增益的 M8/M12/M16=`90.2%/78.8%/85.5%`，1 s AMC
+净增益仍为 `+0.186/+0.394/+0.352 bit/s/Hz`；单用户 FAS 在 M=16、10% outage 处获得
+`10.60--12.58 dB` SNR 收益；3.2 GHz 下 100 ms 更新只对应约 `1.43 km/h`，把甜区
+定量限定为准静态/缓慢游牧。E1 是离线非 oracle 控制器仿真，尚未部署到实时 direct RX。
+R23 进一步指出吞吐域 estimated/oracle 保留率为 M8/M12/M16=`85.0%/97.0%/54.5%`，
+因此估计 CSI 下 M12 成为甜点，不能只报告 SINR-objective 域 79%--90% 的保留率。
+
 > **物理实现边界**：当前 OTA 硬件采集是四路并行 RX 原始 IQ；单链四相切换行为在
 > raw122 数据上受控模拟。它是开关接收机算法和实时化平台，不应描述成已经完成的
 > 物理单 RF 链开关板原型。
 
-首次了解本工程、但不熟悉快速开关单链 MIMO 的读者，建议先读
-[`SYSTEM_EXPLAINER.md`](SYSTEM_EXPLAINER.md)；本文 README 更偏向代码、架构和结果索引。
+首次了解本工程、但不熟悉快速开关单链 MIMO 的读者，可先读较短的
+[`SYSTEM_EXPLAINER.md`](SYSTEM_EXPLAINER.md)；需要从论文角度系统理解背景、术语、数学
+模型、理论推导、R1--R23 实验设计、具体数据和应用场景时，阅读
+[`TECHNICAL_MANUAL.md`](TECHNICAL_MANUAL.md)。本文 README 更偏向代码、架构和结果索引。
 
 ## 工程概览
 
@@ -42,7 +52,7 @@ M12/M16 净增益为 `+0.614/+0.710 bit/s/Hz`，Gate 3 重测通过；同步感�
 | 实时数据面 | YunSDR DMA → native ring → 四相抽取/CFO/FFT → C DM-RS/RZF/QPSK/BER |
 | MATLAB 控制面 | PSS/PBCH 获取、CP-CFO、帧 timestamp、两阶段启动、低频健康检查、绘图 |
 | 离线主干 | reference → 用户损伤 → flat/TDL-A 信道 → 开关/RX-LO → MATLAB/ICI-DF → BER/EVM/outage |
-| 当前研究状态 | Phase 0--2 已冻结；Phase 3 三门、Part D 理论和 Part C 能效已通过 R22 审议并冻结；下一阶段为论文写作 |
+| 当前研究状态 | Phase 0--2、Phase 3 R16--R22 已冻结；E1--E3 已由 R23 通过，R1--R23 实验关闭，转入论文写作；本轮尚未提交 |
 | 完整运行命令 | [`RUN_COMMANDS.md`](RUN_COMMANDS.md) |
 | 模型公式与边界 | [`IMPAIRMENT_MODELS.md`](IMPAIRMENT_MODELS.md) |
 | 全部实验与裁决 | [`EXPERT_REVIEW.md`](EXPERT_REVIEW.md)、[`REVIEW_VERDICTS.md`](REVIEW_VERDICTS.md) |
@@ -130,7 +140,7 @@ sudo env TYPE1_DIRECT_DURATION_SEC=60 TYPE1_FIFO_RING_BLOCKS=2048 \
   TYPE1_DIRECT_STARTUP_MODE=two_stage matlab -batch "type1_rx_direct"
 ```
 
-TX/RX 主机、SSH 跳板、可视化命令、R1--R22 精确复现命令和正式 MAT 路径见
+TX/RX 主机、SSH 跳板、可视化命令、R1--R23 精确复现命令和正式 MAT 路径见
 [`RUN_COMMANDS.md`](RUN_COMMANDS.md)。
 
 ## 目录与关键脚本
@@ -157,6 +167,8 @@ TX/RX 主机、SSH 跳板、可视化命令、R1--R22 精确复现命令和正�
 | Phase 3 R20 系统兑现 | `type1_phase3_acquisition_aware_schedule.m`、`type1_phase3_amc_table.m`、`type1_phase3_iir_mex.c`、`type1_run_phase3_r20.m` | 50-seed 同步统计、冻结 AMC 抽象、扫描周期、M=12/16 与 Gate 3 重测 |
 | Phase 3 R21 理论 | `type1_phase3_theory_metrics.m`、`type1_phase3_correlation_gain.m`、`type1_validate_phase3_theory.m`、`type1_run_phase3_r21_theory.m` | 闭式 LMMSE SINR、MMSE/log-det 速率、残余谱界和 J0 孔径/相关边界 |
 | Phase 3 R22 能效 | `type1_phase3_power_parameters.m`、`type1_phase3_power_breakdown.m`、`type1_phase3_frontend_metrics.m`、`type1_phase3_hbf_combiner.m`、`type1_phase3_greenmo_like_schedule.m`、`type1_validate_phase3_energy.m`、`type1_run_phase3_r22_energy.m` | 统一组件表、DBF/HBF/GreenMO-like 理想速率、扫描能量、bits/Joule 与负载能量正比曲线 |
+| 投稿 E1 在线信息选择 | `type1_phase3_scan_matrix.m`、`type1_phase3_estimate_scan_csi.m`、`type1_run_paper_e1_online_selection.m` | DM-RS 扫描、名义泄漏反演、truth-CSI/estimated 成对选择与 full-stack AMC |
+| 投稿 E2/E3 | `type1_run_paper_e2_fas_diversity.m`、`type1_run_paper_e3_mobility_mapping.m` | 单用户最强端口 FAS outage/SNR gain；扫描周期到移动速度解析映射 |
 
 ## Phase 0：基础链路与回归锚点
 
@@ -381,6 +393,29 @@ AMC 能效仅为 M4/M8/M12/M16 的 `38.4/55.5/61.7/65.2 Mbit/J`，不能和缺�
 GreenMO 算法/原型复现；完整参数、来源和口径见
 [`PHASE3_ENERGY_MODEL.md`](PHASE3_ENERGY_MODEL.md)。
 
+## 投稿前补充 E1--E3
+
+E1 不再让选择器读取 TDL 真值：M=8/12/16 分别用 2/3/4 个 10 ms 扫描帧，经同一
+20 dB AWGN、25 dB 隔离、20 ns 建立和 OU 抖动后，用 Type-1 DM-RS 估计各端口信道。
+20 个成对 TDL seed 的中位 objective 保留率为 `0.902/0.788/0.855`，估计版 1 s AMC
+相对 M4 的净增益仍为 `+0.186/+0.394/+0.352 bit/s/Hz`。它关闭了“正结果只存在于
+truth-CSI”的缺口，但还是离线控制器，不能称为硬件实时选择。
+
+![DM-RS 估计选择、full-stack AMC 与 H NMSE](docs/images/paper_e1_online_selection.png)
+
+E2 用 100000 个单位功率 Rayleigh/J0 realization 做单用户最强单端口选择；M=16 在
+10% outage 处相对 M=1 的 SNR gain 随间距 0.125/0.25/0.5 lambda 为
+`10.599/12.040/12.576 dB`。E3 则把 R20 扫描周期映射到移动性：3.2 GHz 下 100 ms
+约为 `0.397 m/s=1.428 km/h`，说明当前适用条件是准静态/缓慢游牧。
+
+![单用户 FAS 最强端口分集](docs/images/paper_e2_fas_diversity.png)
+
+![扫描周期到移动速度的解析边界](docs/images/paper_e3_mobility_mapping.png)
+
+三项的远端命令、正式 MAT/SHA 和作废 smoke 说明见 `RUN_COMMANDS.md` 与
+`EXPERT_REVIEW.md` §47。E4 子带选择、TX/TMA、ISAC、RIS、多 SNR OTA 和真实开关 PCB
+均未开启。
+
 ## 统计与表述纪律
 
 - 零错误只报告 `-log(0.05)/Nbits` 等 95% 上界，不写成已证明 BER=0；
@@ -411,6 +446,7 @@ GreenMO 算法/原型复现；完整参数、来源和口径见
 | [`PHASE3_PLAN.md`](PHASE3_PLAN.md) | Phase 3 冻结信号模型、物理约束、三门和执行顺序 |
 | [`PHASE3_ENERGY_MODEL.md`](PHASE3_ENERGY_MODEL.md) | R22 统一功耗组件表、扫描能量公式、公平比较口径、来源和不可外推边界 |
 | [`SYSTEM_EXPLAINER.md`](SYSTEM_EXPLAINER.md) | 面向通信同行的系统原理、非理想性影响、结果边界与后续工作说明 |
+| [`TECHNICAL_MANUAL.md`](TECHNICAL_MANUAL.md) | 论文式技术手册：前置术语表、统一数学模型、理论推导、R1--R23 实验证据、应用场景与限制 |
 
 ## 提交变更记录
 
@@ -462,5 +498,9 @@ GreenMO 算法/原型复现；完整参数、来源和口径见
 - `cmex-2026.07.16.30` -- 完成 R21 Part D：新增闭式 LMMSE SINR/MMSE与log-det速率、残余谱范数下界和 J0 几何增益；以 `8.88e-15 dB` 误差逐位闭合 R20，并保留孔径非单调和理论 rate 不含全波形残差的边界。
 - `cmex-2026.07.16.31` -- 完成 R22 Part C：冻结 GreenMO 锚定统一功耗表并计入端口扫描；完成本文/GreenMO-like/DBF/PC-HBF/FC-HBF 的 50-seed bits/Joule 与能量正比对照，保留理想/full-stack 双口径和非硬件实测边界。
 - `cmex-2026.07.16.32` -- R22 专家审议通过；按平台/选择/全栈/理论/能效/文档六个主题整理提交，关闭 Phase 3 并打 `phase3-freeze-2026-07-16`，后续转入论文写作。
+- `cmex-2026.07.16.33` -- 新增独立论文式技术手册：在正文前统一解释全部术语和符号，按背景—系统—建模—理论—实验—应用重组 Phase 0--3，并嵌入冻结数据、正/负结果和硬件边界；不新增或重跑实验。
+- `cmex-2026.07.16.34` -- 按论文裁决为技术手册加入执行摘要、GreenMO/FAS 对照和 PLL 公式修正；完成 E1 DM-RS 非 oracle 选择、E2 单用户 FAS 分集、E3 扫描周期—移动速度映射及正式审计，尚未提交。
+- `cmex-2026.07.16.35` -- 重写会话交接文档：汇总 Phase 0--3 与 R23 已通过的 E1--E3、全量复现地图、文件逻辑分类、脏工作树归属、已知边界、禁止重踩项和论文写作计划；不移动文件、不提交。
+- `cmex-2026.07.16.36` -- 按用户授权打包 R23 已验收的 E1--E3 代码/正式图、技术手册、论文大纲、审议与完整交接文档；排除本地 `.claude` 和旧 pending 临时图。
 
 </details>

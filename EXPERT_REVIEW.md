@@ -2181,3 +2181,231 @@ Phase 3 关闭结论：受单标量 RF 链和物理 A/S 约束的 M>N 端口选�
 固定端口阵列增益。Dmax=2 码叠加没有稳定增值。R21 的理论是严谨表征与上下界而非新
 容量定理；R22 能效是组件模型而非硬件测量。R1--R22 实验程序由此完备，下一阶段只做
 论文写作或在新授权下开展增强实验。
+
+## 45. 论文式技术手册（2026-07-16）
+
+基于冻结的 `SYSTEM_EXPLAINER.md`、`IMPAIRMENT_MODELS.md`、R1--R22 结果和 Phase 3
+理论/能效资产，新增 `TECHNICAL_MANUAL.md`。本轮不新增模型、代码或实验，不改变任何
+冻结裁决；目标是把分散的工程说明和审议数据整理成可供通信大同行连续阅读的技术手册。
+
+手册共 11 章正文和参考资料，叙事顺序为：前置术语/符号 → 背景与研究问题 → 单标量
+链信号流 → 用户/信道/开关/RX-PLL 数学模型 → 静态/动态二分、CFO 门限、泄漏条件数、
+OU、ICI 核、LMMSE 与能效推导 → 成对/分层/预注册实验方法 → 实时、Phase 0--3 的逐项
+目的/设计/数据/结论 → 六条综合认识 → 应用场景、限制和复现地图。
+
+为避免论文式手册只保留正结果，正文显式保留以下 no-go 和边界：ICI-DF 从 flat
+38%--58% 收缩到 TDL 约 3%；公共 LO 必然更好的假设被否定；PSS 高 SNR false-peak
+平台；R15 EVM² 倍率 2.112 no-go；R19 固定 QPSK goodput no-go；Dmax=2 码叠加不增值；
+同步感知选择仍为 oracle；能效不是功率计实测。R22 的 69% 表述已拆成未扣扫描
+sum-rate 71.1% 和扫描后有效理想速率约 69%，防止与表中 `21.634/30.411` 产生歧义。
+
+手册引用的代表数据包括 C/MEX `-115 dB` 等价和 `9.380 ms/frame`、逐用户 CFO 补偿
+`0.273→9.49e-4`、OU 相关时间导致 BER 约 10× 差异、TDL ICI-DF
+`0.16567→0.16046`、R17 `+2.420 dB`、R18 92.4% 保留率、R20
+`+0.449/+0.614/+0.710 bit/s/Hz`、R21 `8.88e-15 dB` 理论闭合，以及 R22
+`200.1/45.5/65.2 Mbit/J` 的理想本文/理想 DBF/本文全栈三种不同口径。
+
+本地审计：1354 行初稿的所有本地链接可解析，heading level 无跳级，88 个 `$$` 和
+10 个代码围栏均成对，关键冻结数字全部存在，`git diff --check` 无输出；随后仅增加
+术语补充、来源和索引，不改变数据。`RUN_COMMANDS.md` 新增手册结构检查及“无新实验
+资产”的复现说明，README 新增入口和 `.33` 变更行。本轮等待用户验收，不提交 Git。
+
+`PAPER_OUTLINE.md` 后续手册裁决已落实：开头新增一页式执行摘要、五个头条数字、统一
+架构图、项目状态和仅三项补充计划；增加“本文 vs GreenMO vs 经典 FAS”对照表；修正
+RX-PLL 公式中 `\sigma_\phi` 的 LaTeX 反斜杠，并明确公共 122.88 MS/s / 独立 30.72
+MS/s 两个注入点的 `F_rate` 取值。审议仅“建议”把术语表移附录，而用户原始硬要求是
+所有术语在使用前声明，因此术语表保留在第 0 章，正文首次出现复合术语时继续解释；
+这是有意的读者约束取舍，不是漏改。原正文没有删除。
+
+## 46. 投稿前 E1--E3 补充实验预注册（2026-07-16，运行前）
+
+依据 `PAPER_OUTLINE.md`，只开放 E1 在线估计信道选择、E2 单用户 FAS 分集和 E3 扫描
+周期到移动速度映射；明确不做 TX/TMA、ISAC、RIS、多 SNR OTA 重采和真实 PCB。本节在
+查看 E1--E3 数据前冻结，禁止为通过而改变参数。
+
+### 46.1 E1：DM-RS 估计信道端口选择
+
+- 信道/SNR/损伤沿用 R20：20 dB、静态 TDL-A、J0 几何、25 dB 隔离、20 ns 建立、
+  fast=0.2、`tauC=1 us`、Dmax=1；paper 使用 seeds `20262201:20262220`；
+- 每个 M 的扫描帧使用互不重叠的四端口组，每帧最多把 4 个物理端口映射到 4 条码相；
+  M=8/12/16 总共 2/3/4 帧，其中相对当前活动组的额外扫描开销仍为 1/2/3 帧；
+- 每个扫描帧经过同一 AWGN、有限隔离和时变建立路径；用冻结 Type-1 DM-RS 与
+  `nrChannelEstimate` 对 10 个 data slot 做复信道平均。不同扫描组的有效观测按已知名义
+  泄漏权重矩阵做 LS 反演得到 `Hhat(M,N,K)`；不读取 TDL taps；时变建立残余不从真值
+  校正，作为在线估计误差保留；
+- oracle 与 estimated 都使用相同的 `type1_phase3_greedy_schedule(...,Dmax=1)`。estimated
+  只看 Hhat；最终评价一律回到 true H、同一数据波形和完整损伤接收链；
+- 主要量：每 seed 真 objective gain retention
+  `(gainEstimated/gainOracle)`、paired win/loss、H NMSE、扫描噪声、PBCH/data success、
+  decoded BER、EVM-quality、1 s frozen-AMC goodput。ratio 分母不正的 seed 单独标记，
+  不强制截到 `[0,1]`；
+- 不预注册“必须通过”的正门。若 estimated 的中位保留率和 AMC 增益为正，则可报告在线
+  选择仍保留部分收益；若任一消失，则结论为“选择增益受信道估计质量门控”。
+
+### 46.2 E2：单用户 FAS 分集模式
+
+- 单用户、单位平均功率 Rayleigh/J0 相关端口；`M=[1,4,8,12,16]`，间距
+  `[0.125,0.25,0.5] lambda`，paper 至少 100000 realization，固定随机种子；
+- 每个 realization 选择瞬时功率最大的单端口，不做多端口相干求和；比较量为 outage
+  vs 平均 SNR、10% outage 所需 SNR、相对 M=1 的 SNR gain 和中位选中功率；
+- M=1 数值 outage 必须与解析 Rayleigh `1-exp(-gamma/rho)` 在蒙卡容差内一致；同一间距
+  的 M 值使用同一 M16 draw 的前缀，保证嵌套端口成对且 outage 随 M 不增；
+- 不预注册“间距越大必然单调更好”。J0 相关随间距振荡，任何非单调均按结果报告。
+
+### 46.3 E3：更新周期到移动速度映射
+
+- 采用裁决冻结公式 `Tc=0.423/fd`、`fd=v/lambdaC`、载频 3.2 GHz，
+  `lambdaC=c/fc=9.375 cm`；
+- 对 R20/R22 的 `updateSec=[0.05,0.1,0.2,0.5,1,2,5,10]` 计算满足
+  `Tupdate<=Tc` 的最大速度，并给 m/s 与 km/h；
+- 这是 Jakes/Clarke 近似下的适用性映射，不是新的空口测量，也不把 100 ms 转正点改写成
+  标准规定。主结论应把 100 ms 对应的速度直接报告为准静态/游牧边界。
+
+## 47. 投稿前 E1--E3 补充实验结果（2026-07-16）
+
+### 47.1 实现与 smoke 审计
+
+新增 `type1_phase3_scan_matrix.m` 和 `type1_phase3_estimate_scan_csi.m`：前者把 M 个候选
+端口划成互不重叠的 4 端口扫描帧并生成名义泄漏权重矩阵，后者让每帧经过真实 AWGN、
+有限隔离和 OU 建立状态，用冻结 Type-1 DM-RS/`nrChannelEstimate` 对默认 10 个 data
+slot 平均，再对名义泄漏矩阵做 LS 反演。`meta.usesTrueChannel=false` 且
+`settlingTruthCorrected=false`，选择器没有读取 TDL taps 或 beta 真值。
+
+代数验证在 M=16 下得到扫描矩阵 rank=16、condition=1.9534、无噪声 H 恢复相对误差
+`2.54e-16`、恢复前后贪婪 objective 差 `0 dB`。第一次 smoke 暴露一项计量问题：reference
+在 OFDM 调制后对四层分别缩放至 0.72 峰值，而 DM-RS 估计把这一已知 TX 比例包含在
+Hhat 中，未去嵌时 raw H NMSE 约 `+9--10 dB`。该 smoke 作废；修复只从共享
+`txGrid/txWaveform` 计算已知层比例，不使用仿真 H。第二次 smoke 后 H NMSE 回到约
+`-4 dB`，随后才启动 paper 运行。这个修正不改变信道/SNR/损伤/seed 或判据。
+
+E2 新增 `type1_run_paper_e2_fas_diversity.m`，强制最强单端口而非相干合并；同一间距下
+所有 M 使用同一 M16 Gaussian draw 的嵌套前缀。E3 新增
+`type1_run_paper_e3_mobility_mapping.m`，只实现冻结 Clarke/Jakes 解析映射。六个新增
+MATLAB 文件（含独立 E1 绘图器）远端 `checkcode` 无阻塞问题；E1 代数门、E2 M=1 解析门/嵌套 outage 门、
+E3 单位恒等门均通过。
+
+### 47.2 E1：估计信道选择结果
+
+正式运行使用预注册 20 个 seed `20262201:20262220`。truth-CSI 与 estimated 两臂使用
+同一贪婪算法，故前者是“读取真值的贪婪参考”而不是穷举最优；estimated 超过该参考的
+少量 seed 属于局部搜索路径差异，不能称为超过 oracle 最优。
+
+| 量 | M=8 | M=12 | M=16 |
+|---|---:|---:|---:|
+| truth-CSI 中位 objective 增益 | 3.9454 dB | 5.9390 dB | 6.6652 dB |
+| estimated 中位 objective 增益 | 3.3727 dB | 4.3584 dB | 5.8641 dB |
+| 中位 retention | 0.9017 | 0.7882 | 0.8545 |
+| retention 极差 | 0.267--1.237 | 0.137--1.126 | 0.609--1.141 |
+| estimated 正增益 seed | 19/20 | 20/20 | 20/20 |
+| estimated vs truth-CSI win/loss | 3/17 | 2/18 | 4/16 |
+| 中位 H NMSE | -3.9357 dB | -4.0899 dB | -4.0737 dB |
+| full-stack success：truth/estimated | 18/18 | 18/19 | 19/17 |
+| 1 s AMC gain：truth/estimated | 0.2187/0.1859 | 0.4063/0.3943 | 0.6460/0.3524 bit/s/Hz |
+
+主结论为正但需缩放：非 oracle 的 DM-RS 扫描选择在三种 M 上均保留正中位 objective 和
+正 full-stack AMC 增益，关闭了“所有 Phase 3 正结果只依赖真值信道”的最大缺口；但
+M16 的 AMC 收益从 truth-CSI 参考 `+0.6460` 缩到 `+0.3524 bit/s/Hz`，且 success 从
+19/20 降到 17/20，证实信道估计与 acquisition 仍是实质门控。它是静态 TDL 离线控制器
+仿真，不是硬件实时选择器。
+
+正式资产：
+
+```text
+/home/bupt/type1_paper_supplements/type1_paper_e1_paper_20260716_111405/
+paper_e1_online_selection.mat  930796c9f18399185607e933c02aa1a21dc1faffa676876a8015b991234220ae
+paper_e1_online_selection.png  80a05deb2517f6d5ad3604b3da759cc7c45216863677fede247d6d54483a2686
+```
+
+E1 另有第一次完整运行 `...110222/`。两次运行的
+`validation/objectiveDb/hNmseDb/retention/schedule/scanMeta/data` 七个科学字段
+`isequaln` 全为 1；第二次 MAT 新增成对汇总字段，并用固定 M8/M12/M16 顺序重绘正式图。
+
+### 47.3 E2：单用户 FAS 分集结果
+
+paper 使用 100000 realization。M=1 蒙特卡洛 outage 相对解析 Rayleigh 式的最大绝对
+误差在三种间距分别为 `0.0029/0.0013/0.0023`，嵌套端口 outage 对 M 单调不增门通过。
+10% outage 所需平均 SNR 与相对 M=1 收益如下：
+
+| d/lambda | M1 | M4 | M8 | M12 | M16 | M16 gain |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.125 | 9.713 | 3.472 | 1.147 | -0.059 | -0.886 | 10.599 dB |
+| 0.25 | 9.778 | 1.789 | -0.497 | -1.571 | -2.262 | 12.040 dB |
+| 0.5 | 9.791 | 1.061 | -1.165 | -2.170 | -2.785 | 12.576 dB |
+
+这补齐了单用户 FAS 分集模式且结果符合相关性物理：0.125 lambda 强相关时增益最小，
+0.5 lambda 时最大。该结论限于单用户平坦 Rayleigh/J0 最强端口选择，不能与四用户
+TDL/损伤后的 R20 净吞吐混为同一指标。
+
+```text
+/home/bupt/type1_paper_supplements/type1_paper_e2_paper_20260716_111306/
+paper_e2_fas_diversity.mat  bc505fea9cd95dc9911918826b65b88c97ed6dacf08600273c872455dd3a9457
+paper_e2_fas_diversity.png  e8bde885762af89fbac94543a23b3f8b8594e55f40aecc60983a6aed45fd6154
+```
+
+### 47.4 E3：物理移动性边界
+
+3.2 GHz、`Tc=0.423/fd` 下，更新周期 50/100/200/500 ms 对应最大名义速度
+`0.793/0.397/0.198/0.0793 m/s`，即 `2.855/1.428/0.714/0.286 km/h`；1/2/5/10 s
+进一步降为 `0.143/0.0714/0.0286/0.0143 km/h`。因此 R20 “至少 100 ms 扫描摊薄”与
+移动性不是独立条件：100 ms 已把适用范围限定到准静态或缓慢游牧。此为解析边界，未做
+移动信道闭环实测。
+
+```text
+/home/bupt/type1_paper_supplements/type1_paper_e3_20260716_111307/
+paper_e3_mobility_mapping.mat  9e00991bc5f62bfab84b9157111597829c7e9af36b3caf93cb6327a3377cdefe
+paper_e3_mobility_mapping.png  74f993c3e0b97bf9cfcfc896bfdde94ccb4b2d9b053824750d587c8401c96e53
+```
+
+### 47.5 本轮可得结论与下一步
+
+E1--E3 已关闭 `PAPER_OUTLINE.md` 指定的三个投稿缺口：估计信道下仍有正收益、FAS 模式
+阶梯有单用户锚点、100 ms 已转换成可解释移动速度。没有开启 E4 子带选择，也没有开展
+TX/TMA、ISAC、RIS、多 SNR OTA 或真实 PCB。下一步是专家复核新增代码与正式 MAT；通过
+后再决定是否形成新的 paper-supplement freeze 提交。本轮不提交 Git。
+
+最终复现审计：E1 两次 paper 的七个科学字段全为 1；E2 fresh 目录
+`.../type1_paper_e2_paper_20260716_112710/` 与正式目录的
+`preRegistration/validation/outage/requiredSNR/gain/medianPower/selectedPower/summary` 八个
+字段全为 1；E3 fresh 目录 `.../type1_paper_e3_20260716_112712/` 的四个科学字段全为 1。
+七个新增 MATLAB 文件最终远端 `checkcode(...,'-id')` findings 均为 0；本地正式三图与
+对应远端资产 SHA 一致。
+
+## 48. 会话结束交接文档重构（2026-07-16）
+
+按用户要求完全重写 `HANDOFF.md`，使无上下文新会话可以从一个入口恢复当前工程。本轮
+不新增或重跑无线实验，不改变 E1--E3 及 R1--R22 结论。新交接文档补齐：当前论文任务、
+Phase 0--3 与 E1--E3 完成状态、实时/离线物理边界、远端和 Git freeze、按 R 编号的全部
+复现地图、E1--E3 正式路径/SHA、根目录文件逻辑分类、暂不移动文件的原因、当前脏工作树
+归属、11 条未关闭边界、科研/物理/E1/C-MEX 禁止重踩清单和下一步验收/论文计划。
+
+文件整理裁决是“先逻辑分类、暂不物理搬迁”：MATLAB 根路径、MEX build、远端复制和冻结
+tag 都依赖当前平铺结构；目录重构必须在 E1--E3 独立验收/tag 后另开分支，先建立
+`FILE_INDEX.md` 与统一 `startup.m/addpath`，再做全回归。交接文档明确标记
+`REVIEW_VERDICTS.md`、`PAPER_OUTLINE.md`、`.claude/`、R13/R14 thinking 和 pending 图的
+所有权，防止新会话误提交或清理。README 变更记录追加 `.35`；本轮等待用户验收，不提交。
+
+## 49. R23 通过后的交接状态修订（2026-07-16）
+
+在交接最终审计时发现专家已在 `REVIEW_VERDICTS.md` 追加 R23。R23 独立复核 E1 两次
+运行、E2 解析极限和 E3 Clarke 映射，裁决 E1--E3 全部通过，R1--R23 实验程序关闭并
+正式放行论文写作。因此 `HANDOFF.md` 和 README 的状态从“等待 E1--E3 审议”改为
+“R23 已通过但尚未提交；下一阶段只写论文”。没有改写专家维护的 R23 原文。
+
+R23 新增的论文 nuance 也写入交接：SINR-objective 域中位保留率为
+`90.2%/78.8%/85.5%`，但 estimated/oracle AMC 吞吐增益保留率为
+M8/M12/M16=`85.0%/97.0%/54.5%`。MCS 门限放大了 M16 的 CSI 估计损失，使 M12
+`+0.394` 高于 M16 `+0.352 bit/s/Hz`，所以论文必须同时报告两个域，并说明现实 CSI
+使最优端口数下移。当前不新增实验、不自行提交；下一会话从论文 §V/§VII 吸收该结论。
+
+## 50. R23 资产提交打包（2026-07-16）
+
+用户明确授权提交当前 Markdown 和修改代码。本次科学提交范围包括 E1--E3 七个 MATLAB
+文件、三张正式图、`TECHNICAL_MANUAL.md`、`PAPER_OUTLINE.md`、R23
+`REVIEW_VERDICTS.md`、`R13_thinking.md`、`R14_thinking.md`、README、RUN、EXPERT 与
+HANDOFF。历史 thinking 文档随“所有 Markdown”授权进入版本控制，但不升级为冻结结论；
+`REVIEW_VERDICTS.md` 仍归专家维护。
+
+明确排除 `.claude/` 本地设置与两张未被当前文档引用的旧 pending 临时图。提交前保持
+E1 两次七字段、E2 八字段、E3 四字段 fresh 一致性结论不变，七个新 MATLAB 文件远端
+checkcode=0，Markdown 链接/公式/围栏与 `git diff --check` 通过。本轮只做本地 commit，
+没有获得 push 授权。
