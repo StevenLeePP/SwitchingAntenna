@@ -52,7 +52,7 @@ R23 进一步指出吞吐域 estimated/oracle 保留率为 M8/M12/M16=`85.0%/97.
 | 实时数据面 | YunSDR DMA → native ring → 四相抽取/CFO/FFT → C DM-RS/RZF/QPSK/BER |
 | MATLAB 控制面 | PSS/PBCH 获取、CP-CFO、帧 timestamp、两阶段启动、低频健康检查、绘图 |
 | 离线主干 | reference → 用户损伤 → flat/TDL-A 信道 → 开关/RX-LO → MATLAB/ICI-DF → BER/EVM/outage |
-| 当前研究状态 | Phase 0--2、Phase 3 R16--R22 已冻结；E1--E3 已由 R23 通过，R1--R23 实验关闭，转入论文写作；本轮尚未提交 |
+| 当前研究状态 | Phase 0--2、Phase 3 R16--R22 已冻结；E1--E3 已由 R23 通过，R1--R23 实验关闭，转入论文写作；R23 资产已本地提交、未 push/tag |
 | 完整运行命令 | [`RUN_COMMANDS.md`](RUN_COMMANDS.md) |
 | 模型公式与边界 | [`IMPAIRMENT_MODELS.md`](IMPAIRMENT_MODELS.md) |
 | 全部实验与裁决 | [`EXPERT_REVIEW.md`](EXPERT_REVIEW.md)、[`REVIEW_VERDICTS.md`](REVIEW_VERDICTS.md) |
@@ -501,6 +501,6 @@ E2 用 100000 个单位功率 Rayleigh/J0 realization 做单用户最强单端�
 - `cmex-2026.07.16.33` -- 新增独立论文式技术手册：在正文前统一解释全部术语和符号，按背景—系统—建模—理论—实验—应用重组 Phase 0--3，并嵌入冻结数据、正/负结果和硬件边界；不新增或重跑实验。
 - `cmex-2026.07.16.34` -- 按论文裁决为技术手册加入执行摘要、GreenMO/FAS 对照和 PLL 公式修正；完成 E1 DM-RS 非 oracle 选择、E2 单用户 FAS 分集、E3 扫描周期—移动速度映射及正式审计，尚未提交。
 - `cmex-2026.07.16.35` -- 重写会话交接文档：汇总 Phase 0--3 与 R23 已通过的 E1--E3、全量复现地图、文件逻辑分类、脏工作树归属、已知边界、禁止重踩项和论文写作计划；不移动文件、不提交。
-- `cmex-2026.07.16.36` -- 按用户授权打包 R23 已验收的 E1--E3 代码/正式图、技术手册、论文大纲、审议与完整交接文档；排除本地 `.claude` 和旧 pending 临时图。
+- `cmex-2026.07.16.36` -- 按用户授权以 `94c91ed` 提交 R23 已验收的 E1--E3 代码/正式图、技术手册、论文大纲、审议与完整交接文档；排除本地 `.claude` 和旧 pending 临时图，尚未 push/tag。
 
 </details>

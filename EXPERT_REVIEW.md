@@ -2409,3 +2409,10 @@ HANDOFF。历史 thinking 文档随“所有 Markdown”授权进入版本控制
 E1 两次七字段、E2 八字段、E3 四字段 fresh 一致性结论不变，七个新 MATLAB 文件远端
 checkcode=0，Markdown 链接/公式/围栏与 `git diff --check` 通过。本轮只做本地 commit，
 没有获得 push 授权。
+
+## 51. R23 本地提交结果（2026-07-16）
+
+科学资产已按上述范围提交为 `94c91ed feat: add R23 paper supplement experiments and
+manual`，共 19 个文件；包含全部当前项目 Markdown、E1--E3 七个 MATLAB 文件与三张
+正式图。`.claude/` 和两张旧 pending 临时图未进入提交。提交后仅追加本节、README 与
+HANDOFF 的 commit 状态，形成独立的小型交接状态提交。未执行 `git push`，未创建新 tag。
