@@ -1,368 +1,466 @@
-# Type-A 4T4R：MEX 持久消费者实时接收系统
+# Type-A 4T4R C/MEX 实时链路与非理想性研究平台
 
-本目录是 `demo` 工程的 C/MEX 实时化分支（`cmex`）。目标不是改变
-NR Type-A 4T4R 空口格式，而是把连续接收时最耗时、最容易造成 MATLAB
-队列堆积的工作下放到持久 MEX 消费者，同时保留 MATLAB 作为低频同步和
-诊断控制面。
+本仓库同时维护两条共享同一 Type-A reference 的通信链路：
 
-当前默认参考为半帧载荷：slot 0 用于 PSS/SSB，slot 1--10 为四层 QPSK
-数据，后续 slot 静默。TX 与 RX 必须使用同一个
-`nr4_type1_reference.mat`。
+1. **实时 OTA 链路**：YunSDR 4T4R 收发，C/MEX 持久消费者承担连续数据面，MATLAB
+   只保留低频同步、控制和可视化；
+2. **离线研究链路**：从 reference 到 BER 的纯 MATLAB 可重复主干，用于多用户、
+   TDL-A、开关瞬态、RX-LO、ICI-DF 和 acquisition 统计。
 
-## 当前架构
+当前开发分支为 `cmex`。Phase 2 已在 tag `phase2-freeze-2026-07-15` 冻结：tag 表示
+实验和审计资产完成，并不表示所有预注册门都通过。R15 的正式 EVM² OTA/离线倍率为
+`2.112 > 2`，按预注册判定 **no-go**；最终 OTA 主张限定为“33--43 dB 高 SNR
+单簇功能+趋势验证，离线模型对新增误差功率偏乐观约 2×”。Phase 3 Part A 已通过
+R16；R17/R18 已证明 M=8 理想开关下存在选择头room且在线贪婪可保留其中位 92.4%。
+R19 加入 TDL、25 dB/20 ns/OU 开关损伤、acquisition 和扫描后，M=8 有效吞吐量门
+出现双重结论：原始 SINR-quality NetGain 为 `+2.14 dB`、通过；固定 QPSK 有效吞吐量
+为 no-go，因为一次同步失效和扫描占空比吞掉了接近饱和工作点上的 BER 收益。R20 在
+50 个成对 TDL seed 上扩到 M=12/16，并用冻结 AMC 抽象和扫描周期曲线重测：1 s 更新时
+M12/M16 净增益为 `+0.614/+0.710 bit/s/Hz`，Gate 3 重测通过；同步感知选择的独立增益
+尚不显著。R21 已用闭式 LMMSE SINR/速率把 R20 的 50-seed 数值目标闭合到
+`8.88e-15 dB` 误差。R22 已按统一组件表把 RF 链、ADC、开关、LO、基带和端口扫描
+全部计入能量账本：M=16、1 s 更新的理想参考能效为本文 `200.1 Mbit/J`、DBF
+`45.5 Mbit/J`；R20 全栈 AMC 锚点则只有 `65.2 Mbit/J`。R22 两次 50-seed 运行已逐字段
+一致。R22 专家审议已通过，Phase 3 核心实验和 Part C/D 均完成，并冻结于 tag
+`phase3-freeze-2026-07-16`。该 tag 表示 R16--R22 代码、正式资产索引、负结果和边界均
+已闭环，不表示 oracle 选择器已经成为在线实现或能效已经过实物功率计验证。
 
-```text
-YunSDR RX 4 路 122.88 MS/s
-        |
-        v
-type1_yunsdr_rx_mex.c 后台 pthread
-  - DMA 读取、硬件事件计数、原始 IQ 环形缓冲
-  - producer / consumer sequence 与 drop-new 保护
-        |
-        +--> MATLAB 控制面（低频）
-        |      PSS 锁定、窄窗 PSS 健康检查、CP-CFO 与帧时间基准
-        |
-        v
-direct consumer（MEX 持久数据面）
-  - 四相数字开关：122.88 -> 30.72 MS/s
-  - CFO 补偿、1024 点固定 radix-2 C FFT、612 子载波抽取
-  - 持久 DM-RS / data RE / QPSK / bit-reference maps
-  - 帧 timestamp、FIFO、BER 和分段时延累积
-  - 调用已验证的 C frame-PHY MEX：Type-1 DM-RS、4x4 RZF、QPSK 硬判决
-        |
-        v
-结果 MAT：BER、EVM、H、队列、时延、硬件事件、timestamp/sequence 审计
-```
+> **物理实现边界**：当前 OTA 硬件采集是四路并行 RX 原始 IQ；单链四相切换行为在
+> raw122 数据上受控模拟。它是开关接收机算法和实时化平台，不应描述成已经完成的
+> 物理单 RF 链开关板原型。
 
-MATLAB 不再在每帧导出整段 IQ、重建 reference maps 或执行逐帧 FFT。
-它只在启动时 PSS 锁定 timestamp，并以 0.5 s 周期执行小窗口健康检查，
-把 CFO 与帧时间校正发送给 MEX。
+首次了解本工程、但不熟悉快速开关单链 MIMO 的读者，建议先读
+[`SYSTEM_EXPLAINER.md`](SYSTEM_EXPLAINER.md)；本文 README 更偏向代码、架构和结果索引。
 
-当前启动使用两阶段切换：先用 MATLAB 完成粗 PSS，再显式丢弃已进入软件
-ring 的冷启动数据；完成 maps 与窄窗 PSS 跟踪后，等待可完整解码的 PSS 对齐帧并
-再次 `directflush`，最后才启动 direct consumer。`startupDiscardBlocks`、
-`startupTimestampAudit` 会保存两次丢弃量、PSS/raw timestamp、ring sequence 和
-x=0 的 pending，便于区分软件 ring 历史与驱动 DMA 尚未入环的积压。
+## 工程概览
 
-> 当前 DM-RS/RZF/判决内核是 `type1_decode_frame_grid_mex`；它是 C MEX，
-> 由 direct consumer 以 MEX API 调用。换言之，重计算的 PHY 算法已是 C，
-> 但栅格仍以内部 MEX `mxArray` 传给该内核，并非完全手写的单一 C 函数。
+| 项目 | 当前实现 |
+|---|---|
+| 空口波形 | 30 kHz SCS、51 RB、NFFT=1024、10 ms NR 帧、4 layer QPSK、Type-1 DM-RS ports 1000--1003 |
+| 默认载荷 | slot 0 为 SSB/PBCH；slot 1--10 为四层 payload；slot 11--19 静默 |
+| 采样率 | TX 30.72 MS/s；RX 4 路 122.88 MS/s；四相去交织后 30.72 MS/s virtual RX |
+| 实时数据面 | YunSDR DMA → native ring → 四相抽取/CFO/FFT → C DM-RS/RZF/QPSK/BER |
+| MATLAB 控制面 | PSS/PBCH 获取、CP-CFO、帧 timestamp、两阶段启动、低频健康检查、绘图 |
+| 离线主干 | reference → 用户损伤 → flat/TDL-A 信道 → 开关/RX-LO → MATLAB/ICI-DF → BER/EVM/outage |
+| 当前研究状态 | Phase 0--2 已冻结；Phase 3 三门、Part D 理论和 Part C 能效已通过 R22 审议并冻结；下一阶段为论文写作 |
+| 完整运行命令 | [`RUN_COMMANDS.md`](RUN_COMMANDS.md) |
+| 模型公式与边界 | [`IMPAIRMENT_MODELS.md`](IMPAIRMENT_MODELS.md) |
+| 全部实验与裁决 | [`EXPERT_REVIEW.md`](EXPERT_REVIEW.md)、[`REVIEW_VERDICTS.md`](REVIEW_VERDICTS.md) |
+
+## 整体架构
+
+![Type-A 4T4R C/MEX 与离线研究架构](docs/images/system_architecture.png)
+
+架构图由 [`tools/render_architecture.py`](tools/render_architecture.py) 确定性生成。图中：
+
+- 橙色区域是逐帧 C/MEX 热路径；
+- 紫色区域是 MATLAB 控制、诊断和离线算法；
+- 实时与离线两条路径共享 `nr4_type1_reference.mat`、帧结构和 BER 真值；
+- OTA raw122 只在通过 PSS/PBCH/EVM gate 后进入离线配对验证。
+
+### 实时启动与队列语义
+
+实时 RX 采用两阶段启动：MATLAB 先完成 PSS/粗 CFO，再丢弃软件 ring 中的冷启动
+历史；持久 maps 和窄窗跟踪就绪后再次对齐并 arm direct consumer。这样 PSS 冷启动
+不会自动变成必须追赶的历史帧。
+
+MEX 队列以 **1 ms raw DMA block** 为单位，因此 `pending=10` 表示约 10 ms 数据待消费；
+`highWater=517` 表示历史峰值曾达到约 517 ms，不等于单帧解码耗时 517 ms。
+`dropNew>0`、硬件 overflow/timeout、timestamp invariant 失败或 pending 持续正斜率时，
+该轮连续 BER 不具备有效性。
 
 ## 已下放到 MEX 的功能
 
-| 功能 | 位置 | 是否在逐帧热路径 |
+### 持久实时数据面
+
+| 组件 | 已下放功能 | 调用方式 |
 |---|---|---|
-| YunSDR 四通道 DMA 接收、原始环形缓冲、事件计数 | `type1_yunsdr_rx_mex.c` | 是 |
-| FIFO producer/consumer、drop-new、高水位 | `type1_yunsdr_rx_mex.c` | 是 |
-| 4 相开关/解交织 | `direct_make_grid` | 是 |
-| CFO 复旋、固定 1024 点 FFT、子载波抽取 | `direct_make_grid` | 是 |
-| DM-RS/data/QPSK/bit maps 的持久副本 | `directphysetup` | 启动一次 |
-| Type-1 DM-RS、4x4 RZF、硬判决、raw BER 累积 | `type1_decode_frame_grid_mex.c` + `directpoll` | 是 |
-| DM-RS 残差噪声方差 | `type1_decode_frame_grid_mex.c` 第 3 输出 | 是，按 slot |
-| PSS 获取、窄窗 PSS 复检、CFO/时间基准控制 | `type1_analyze_fast.m` | 否，0.5 s 控制周期 |
-| PBCH/MIB、全帧 MATLAB 对照、图形显示 | MATLAB 离线/诊断路径 | 否 |
+| `type1_yunsdr_rx_mex.c` | 四路 DMA pthread、native IQ ring、producer/consumer sequence、事件计数、drop-new、高水位、timestamp 审计 | RX 打开后持续运行 |
+| `direct_make_grid`（上述 C 文件内部） | 固定 switch-phase 映射、四相抽取、连续 CFO 复旋、154×4 个 1024 点 radix-2 FFT、612 子载波抽取 | 每个 10 ms 帧 |
+| `directphysetup` | 持久保存 DM-RS indices/symbols、data indices、QPSK reference、coded-bit reference 和 RZF λ | 启动一次 |
+| `type1_decode_frame_grid_mex.c` | Type-1 DM-RS 信道估计、DM-RS 残差噪声、4×4 RZF、QPSK 硬判决、EVM、raw bit errors、频域 `Hhat` | `directpoll` 每帧调用 |
+| `directsetcfo` / `directsettiming` | 接受 MATLAB 低频控制面更新，并记录跨 block timestamp/sequence 审计 | 健康检查触发 |
+| `directstatus` | frames、pending、dropNew、highWater、各层 errors/bits、extract/FFT/PHY/total 时延 | 遥测轮询 |
 
-## 关键脚本与命令
+`type1_yunsdr_rx_mex` 通过 MEX API 调用已经验证的 `type1_decode_frame_grid_mex`；PHY
+算法本身是 C，但 grid 仍以内部 `mxArray` 传递，因此当前实现不是完全融合的单一纯 C
+函数库。
 
-| 文件/命令 | 用途 |
+### 其他 MEX 加速器
+
+| 文件 | 用途 |
 |---|---|
-| `type1_tx.m` | 周期发送共享参考中的一个 10 ms 波形；退出时关闭 cyclic TX。 |
-| `type1_rx_direct.m` | MEX 持久消费者的无图形实时 RX；保存 `type1_direct_results.mat`。 |
-| `type1_yunsdr_rx_mex.c` | YunSDR、FIFO、native-ring FFT、时间控制与审计 MEX。 |
-| `type1_decode_frame_grid_mex.c` | C 实现的 Type-1 DM-RS、4x4 RZF、QPSK 判决和 BER。 |
-| `type1_validate_direct_phy_maps.m` | 持久 reference maps 与直接 frame-PHY MEX 的严格等价检查。 |
-| `type1_validate_native_ring_grid.m` | 同一 PSS timestamp 下 native-ring C grid 与 MATLAB grid/H/EVM/raw errors 对照。 |
-| `type1_compare_direct_stages.m` | MATLAB 标准路径、MATLAB+C PHY、native-ring+C PHY 的阶段消融对照。 |
-| `type1_plot_pending_compare.m` | 读取两个 `pendingTrace` 结果，离线绘制单阶段与两阶段启动队列曲线。 |
-| `type1_build_rx_mex.m` | 编译 YunSDR 接收 MEX。 |
-| `type1_run_offline_baseline.m` | 不依赖板卡的 Phase-0：reference 到 BER 的完整 MATLAB 回归主干。 |
+| `type1_dmrs_type1_mex.c` | 实时可视化/fast path 的 Type-1 DM-RS 估计 |
+| `type1_rzf_qpsk_mex.c` | fast path 的 4×4 RZF、QPSK、EVM/bit errors |
+| `type1_decode_frame_grid_mex.c` | 批量 frame-grid PHY，也是 direct consumer 的正式内核 |
+| `type1_phase3_iir_mex.c` | R20 离线大规模扫描中的多臂因果开关建立递推；仅作研究加速，不在实时 direct RX 路径 |
 
-## 离线研究主干（Phase 0）
+仍保留在 MATLAB 的部分包括：PSS/PBCH 获取、控制面 CFO/timing、完整标准函数对照、
+所有 Phase 1--3 非理想性注入、ICI-DF/DDCE/CPE 研究接收机、端口选择、统计停止规则
+和绘图。**Phase 2/3 算法尚未下放到实时 MEX；R20 的 IIR MEX 仅是离线批量加速器。**
 
-`type1_run_offline_baseline.m` 从共享 `nr4_type1_reference.mat` 的四层 TX
-波形出发，经可配置 4×4 平坦信道、共同 CFO、AWGN、4 倍采样和
-`type1_digital_switch` 的四相去交织，最后复用完整的
-`type1_analyze`（PSS、PBCH、Type-1 DM-RS、RZF、QPSK/BER）。它不访问
-YunSDR、无需 `sudo`，并保存 `captures/type1_offline_baseline_*/` 结果。
+## 快速运行
 
-默认配置是确定性高 SNR 的相干理想锚点；`userCfoHz`、
-`userTimingSamples`、`userPowerDb` 已作为每 layer 的受控注入接口预留，
-但默认都为零。该模型是基于四路全数字采样的**可控开关仿真**，不应被表述为
-物理单 RF 链 OTA 实现。
-
-可选环境变量 `TYPE1_OFFLINE_OUTPUT_ROOT` 指定离线结果目录。若实时 sudo
-测试使默认 `captures/` 对普通用户不可写，脚本会自动回退到 MATLAB 的用户临时目录。
-
-### Phase 1 当前实现与模型边界
-
-`type1_offline_multiuser_config.m` 为四个 TX layer 分别注入 CFO、带限分数
-定时偏移、功率和独立 Wiener 相噪（参数单位为 rad/sample，尚未标定为某器件的
-dBc/Hz mask）。在固定场景 `[-350,125,620,-900] Hz` 的用户 CFO 下，现有仅估计
-共同 CFO 的接收机得到 BER `[0, 0.0136501, 0.2730664, 0.2586895]`；逐项消融表明差分 CFO 是
-主要来源，而 CP 内定时偏移、功率失衡和当前相噪强度本身未造成 BER。
-
-`type1_apply_switch_impairments.m` 以相干复泄漏矩阵表示隔离度，并以原始
-122.88 MS/s 一阶因果响应表示 10--90% 建立时间。其代数测试确认：理想参数逐样点
-等于原数字开关；0 dB 同相泄漏等于四路相干和；10 ns 时的 IIR 系数为 `0.832723`。
-
-必须避免一个不合理结论：**固定且周期性的建立时间或静态隔离度，在四相去交织后
-是频率选择性的多相 LTI MIMO 变换，不会天然产生 ICI。** 当前 Type-1 DM-RS 会估计
-这一等效 H，RZF 因而可吸收大部分静态失真。32 dB SNR 下，25 dB/5 ns、15 dB/0 ns
-和近乎无泄漏/10 ns 的受控测试均为零误码，仅 EVM/估计条件数 `cond(Hhat)` 改变。只有时变建立时间、
-switch/ADC 时钟抖动、未知/失配的泄漏矩阵或不充分导频，才可合理地成为残余 ICI 或
-BER 恶化来源；后续曲线必须明确区分“已知且被 DM-RS 校准”的静态损伤与这些残余项。
-
-`type1_run_phase1_sweeps.m` 已实现六条单变量（隔离度、建立时间、差分 CFO、
-独立相噪、过渡时钟抖动、功率失衡）和四张二维图（隔离度×建立时间、差分
-CFO×隔离度、功率×隔离度、定时×隔离度的估计条件数 `cond(Hhat)`）。`smoke` 配置以每点一帧
-检查维度、复现性、失败标记和 PNG/MAT 输出；零误码点绘为 `1/Nbits` 上界，绝不
-伪造对数坐标零点。首个 smoke 结果位于
-`/home/bupt/type1_offline_captures/type1_phase1_smoke_20260714_000017/`：静态项和
-100 ps 抖动均仅达 `BER < 1.57e-6`，而满尺度差分 CFO 的汇总 BER 为约 `0.133`。
-这不是论文级统计；正式曲线必须使用 `TYPE1_SWEEP_PROFILE=pilot` 并提高
-`TYPE1_SWEEP_FRAMES`，每个零误码点报告对应置信上界。
-
-审议修正已开始落实：二维 heatmap 的 `smoke` 网格已提升为至少 `3×3`，`pilot`
-网格为至少 `5×5`。新增 `type1_analyze_user_cfo.m`：以相邻 slot DM-RS 的信道
-相位估计每 layer 残余 CFO，并把相位演化放进 RZF 的每 layer 信道列；它不是对
-混合 RX 样本作不成立的“逐用户去旋”。相邻 0.5 ms slot 的主值相位差仅有
-`±1 kHz` 无模糊范围，`|fhat|>=750 Hz` 会告警，离线压力场景若其已知差分 CFO
-超过 `±800 Hz` 则拒绝运行该补偿器；精确混叠仍不能由单一主值相位差检测。固定
-场景在 `TYPE1_OFFLINE_FRAMES=3`、seed `20260713` 下，补偿 BER 为
-`[0, 5.86559e-5, 9.48969e-4, 0]`，是后续损伤感知接收机应比较的基础基线。
-
-在 RX 服务器上编译并运行直接消费者：
+### 离线基线（不访问板卡）
 
 ```bash
-cd /home/bupt/tools/matlab_test/nr4x4_type1
-/home/bupt/tools/matlab/bin/matlab -batch "type1_build_rx_mex"
-
-# 板卡设备节点仅 root 可访问；按服务器既有权限策略启动。
-env TYPE1_DIRECT_DURATION_SEC=60 TYPE1_FIFO_RING_BLOCKS=2048 \
-  /home/bupt/tools/matlab/bin/matlab -batch "type1_rx_direct"
+cd /path/to/c_demo
+TYPE1_OFFLINE_OUTPUT_ROOT=/tmp/type1_offline \
+  matlab -batch "type1_run_offline_baseline"
 ```
 
-TX 应比 RX 多运行至少启动和收尾余量。`type1_tx.m` 的正确结束日志必须包含：
+Phase 1 结构扫描：
 
-```text
-Type-A TX cleanup: cyclic disable ret=0; YunSDR device closed.
+```bash
+TYPE1_SWEEP_PROFILE=smoke TYPE1_OFFLINE_OUTPUT_ROOT=/tmp/type1_offline \
+  matlab -batch "type1_validate_switch_impairments; type1_run_phase1_sweeps"
 ```
 
-## 队列与实时性指标说明
+### 实时 OTA
 
-MEX 以 **1 ms 原始 DMA block** 为队列单位；在本配置中每 block 为
-122,880 个 122.88 MS/s 样本。所有 `pending`/`highWater` 数值均可近似
-读作毫秒。
+板卡服务器需要用 `sudo` 启动 MATLAB。先在 TX 循环发送共享 reference，再在 RX
+启动 direct consumer：
 
-| 指标 | 含义 | 合格判据 |
+```bash
+# TX
+sudo env TYPE1_TX_DURATION_SEC=75 matlab -batch "type1_tx"
+
+# RX
+sudo env TYPE1_DIRECT_DURATION_SEC=60 TYPE1_FIFO_RING_BLOCKS=2048 \
+  TYPE1_DIRECT_STARTUP_MODE=two_stage matlab -batch "type1_rx_direct"
+```
+
+TX/RX 主机、SSH 跳板、可视化命令、R1--R22 精确复现命令和正式 MAT 路径见
+[`RUN_COMMANDS.md`](RUN_COMMANDS.md)。
+
+## 目录与关键脚本
+
+| 类别 | 入口 | 作用 |
 |---|---|---|
-| `frames` | 已完成的 10 ms 直接解码帧数 | 60 s 应约 6000 帧 |
-| `pending` | producer 已写入、consumer 尚未释放的 1 ms block 数 | 稳定或下降；最终值小于环形容量 |
-| `highWater` | 本轮 `pending` 的最大值 | 用于评估启动突发和容量裕量，不等同丢包 |
-| `dropNew` | FIFO 满时未写入环形缓冲的新 block 数 | 必须为 0；非零则 BER 无效 |
-| `extractMs` | 四相取样、IQ 标定、CFO 复旋的平均帧时延 | 与 FFT/PHY 合计小于 10 ms 且有裕量 |
-| `fftMs` | 154 个 OFDM 符号、4 路 1024 点 C FFT 的平均帧时延 | 同上 |
-| `phyMs` | C DM-RS、RZF、判决与 BER 的平均帧时延 | 同上 |
-| `totalMs` | 上述 direct consumer 一帧总平均时延 | 小于 10 ms 才能长期追上 100 frame/s |
-| `eventDelta` | 四 RX 口的 overflow/count/timeout 增量 | overflow、timeout 必须为 0 |
+| 公共配置 | `type1_config.m` | 波形、RF、帧结构、参考文件、实时 ring 和控制周期的唯一配置源 |
+| 公共 reference | `type1_generate_reference.m`、`nr4_type1_reference.mat` | 生成/保存 TX 波形、DM-RS/data/QPSK/bit 真值 |
+| 实时 TX/RX | `type1_tx.m`、`type1_rx_direct.m`、`type1_rx_live.m` | 循环 TX、无图 direct RX、可视化 RX |
+| MEX 构建 | `type1_build_rx_mex.m`、`type1_build_frame_mex.m`、`type1_build_dmrs_mex.m`、`type1_build_decode_mex.m` | 编译 YunSDR、frame-PHY、DM-RS 和 RZF MEX |
+| MEX 等价验证 | `type1_validate_direct_phy_maps.m`、`type1_validate_native_ring_grid.m`、`type1_compare_direct_stages.m` | maps、grid、H/EVM/raw errors 的 MATLAB/C 对照 |
+| Phase 0 | `type1_run_offline_baseline.m`、`type1_offline_link.m`、`type1_analyze.m` | reference 到 BER 的完整硬件无关主干 |
+| Phase 1 | `type1_offline_multiuser_config.m`、`type1_apply_switch_impairments.m`、`type1_run_phase1_sweeps.m` | 独立用户、静态开关、TDL-A 和扫描基础设施 |
+| Phase 2 损伤 | `type1_run_phase2_timevarying_switch.m`、`type1_run_phase2_tau_correlation.m`、`type1_apply_rx_lo_phase_noise.m` | 时变建立、AR(1)/OU 抖动、边界位移、RX-PLL |
+| Phase 2 接收机 | `type1_analyze_ici_decision_feedback.m`、`type1_run_phase2_ici_df_statistics.m` | ICI 核估计、hard/soft 判决反馈、Q/迭代/SNR 统计 |
+| Phase 2 集成 | `type1_run_phase2_r10_*`、`type1_run_phase2_r11_*`、`type1_run_phase2_r14_*` | 真值分解、DDCE、约束核、received-drive、TDL 最终曲线 |
+| Phase 2 acquisition | `type1_run_phase2_pss_acquisition_statistics.m` | 100-seed PSS waterfall、平台、投票和 2/4 帧累积 |
+| Phase 2 OTA | `type1_run_phase2_r15_capture_campaign.m`、`type1_run_phase2_r15_ota_cross_validation.m` | 合格 raw122 采集、同段损伤配对、matched-SNR EVM² 审计 |
+| Phase 3 Part A | `type1_phase3_config.m`、`type1_phase3_make_schedule.m`、`type1_phase3_single_chain.m`、`type1_phase3_make_tdl_a_channel.m` | M>N 端口几何、A/S 约束、标量单链坍缩和 M 端口 TDL-A |
+| Phase 3 R16 回归 | `type1_validate_phase3_part_a.m`、`type1_run_phase3_part_a.m` | M=N 逐位退化、理想开关、占空比和非法扇出四门 |
+| Phase 3 R17 穷举 | `type1_phase3_enumerate_pair_partitions.m`、`type1_phase3_wideband_metrics.m`、`type1_run_phase3_r17_exhaustive.m` | 2520 个受约束 M=8 调度、噪声感知 MMSE、20-seed TDL Gate 1 |
+| Phase 3 R18 选择 | `type1_phase3_enumerate_f1.m`、`type1_phase3_batch_f1_objective.m`、`type1_phase3_greedy_schedule.m`、`type1_phase3_relax_quantize.m`、`type1_run_phase3_r18_gate2.m` | F1 166824 精确穷举、F1/F2 贪婪与局部松弛量化、flat/TDL Gate 2 |
+| Phase 3 R19 净增益 | `type1_phase3_switch_beta.m`、`type1_phase3_apply_switch_impairments.m`、`type1_run_phase3_r19_gate3.m` | M 端口单标量损伤开关、全波形 acquisition/BER/EVM、扫描后有效吞吐量 Gate 3 |
+| Phase 3 R20 系统兑现 | `type1_phase3_acquisition_aware_schedule.m`、`type1_phase3_amc_table.m`、`type1_phase3_iir_mex.c`、`type1_run_phase3_r20.m` | 50-seed 同步统计、冻结 AMC 抽象、扫描周期、M=12/16 与 Gate 3 重测 |
+| Phase 3 R21 理论 | `type1_phase3_theory_metrics.m`、`type1_phase3_correlation_gain.m`、`type1_validate_phase3_theory.m`、`type1_run_phase3_r21_theory.m` | 闭式 LMMSE SINR、MMSE/log-det 速率、残余谱界和 J0 孔径/相关边界 |
+| Phase 3 R22 能效 | `type1_phase3_power_parameters.m`、`type1_phase3_power_breakdown.m`、`type1_phase3_frontend_metrics.m`、`type1_phase3_hbf_combiner.m`、`type1_phase3_greenmo_like_schedule.m`、`type1_validate_phase3_energy.m`、`type1_run_phase3_r22_energy.m` | 统一组件表、DBF/HBF/GreenMO-like 理想速率、扫描能量、bits/Joule 与负载能量正比曲线 |
 
-例如 `pending=10，峰值 517` 的意思是：试验结束时只剩 10 个 1 ms block
-（约 10 ms）等待处理；启动/同步阶段曾积压到 517 个 block（约 517 ms），
-但没有满队列、没有丢弃新 block，之后已消化到 10。它不是“处理时延 517 ms”。
+## Phase 0：基础链路与回归锚点
 
-### 两阶段启动与初始数据丢弃
+Phase 0 建立不依赖 YunSDR/MEX 的 `reference → channel/AWGN → switch → full receiver
+→ BER` 主干。默认 flat 4×4 确定性信道用于稳定回归，也可切换到 TDL-A。
 
-当前两阶段策略的目标是让 PSS、reference-map 建立和 MATLAB 控制面工作不进入
-direct consumer 的待处理历史。`directflush` 只作用于**已经进入 MEX 软件 ring**
-的块；它不能清空 YunSDR/驱动内部尚未由后台 pthread 读出的 DMA 描述符。因此，
-`pending` 的 x=0 仍可能大于完整一帧所需的约 6--8 ms。这不是 `dropNew`，也不是
-软件 ring 未执行 flush；应通过 `startupTimestampAudit` 中“timestamp 对齐但
-producer sequence 提前”的证据识别该驱动侧积压。
+主要作用：
 
-最新 10 s OTA 启动对比（`captures/type1_direct_20260713_171338`）为：
+- 复用完整 PSS、PBCH、Type-1 DM-RS、RZF、QPSK/BER 接收机；
+- 固定 reference、seed 和每层 bit 真值；
+- 为后续所有损伤点提供同 realization 的 ideal/impaired 配对；
+- 在模型关闭时保证退化回理想基线。
 
-| 项目 | 单阶段历史对比 | 当前两阶段 |
-|---|---:|---:|
-| x=0 pending | 约 482 block | 84 block |
-| 峰值 pending | 约 558 block | 约 103 block |
-| 稳态 pending | 未在 10 s 内追平，结束约 214 block | 约 20 block，最终 15 block |
-| `dropNew` | 0 | 0 |
+默认 3 帧相干锚点四层经验 BER 均为 0，平均 EVM 约
+`[2.718, 2.775, 2.714, 2.738]%`。这里的“0”只表示该有限样本无错误；正式零错点必须
+报告二项分布上界。
 
-两阶段显著减少了 PSS 冷启动造成的软件历史；但该 10 s 结果是启动/队列验证，
-不是对下文 60 s BER 基线的替代。若验收要求 x=0 接近零，需要 vendor DMA 提供
-显式 flush，或把“PSS 锁定--驱动清队列--arm 新帧”的状态机放入 native 路径。
+## Phase 1：独立用户、静态开关与模型分类
 
-## 实时星座图
+### 已实现模型
 
-`type1_rx_live.m` 的星座图以低频率刷新固定数量的均衡后 data RE（默认最多
-500 点/层），并固定坐标轴为 `[-2, 2]`。即使虚拟 IQ 的信号存在性门限判为无信号，
-也不会清空或显示 `NO SIGNAL` 覆盖层：均衡后的噪声/切换过渡散点会照常绘制，
-QPSK 理想点始终显示。门限仅保留给 BER 与有效载荷覆盖率统计，相关快照的
-`outcome` 为 `no-signal-fast-gate`，不计作有效 `decoded` 样本。
+- 每用户独立 CFO、分数 timing、功率和 TX 侧 Wiener 相噪；
+- 25 dB 等隔离度对应的相干复泄漏矩阵；
+- 10--90% 建立时间对应的一阶因果开关状态；
+- 3GPP TDL-A 抽头、Tx/Rx 指数空间相关和可选 Doppler；
+- 六条单变量扫描与四张双变量 heatmap；smoke 为 3×3 结构门，pilot 至少 5×5；
+- 基于跨 slot DM-RS 相位的逐用户残余 CFO 估计，以及 RZF 信道列的相位斜坡补偿。
 
-## 最新 OTA 测试结果
+### 核心结论与边界
 
-以下为最新已保存且带 timestamp/sequence 审计的 RX 60 s 结果：
+| 要素 | 结论 |
+|---|---|
+| 静态隔离度/固定建立 | 四相去交织后属于周期多相 LTI MIMO 变换，Type-1 DM-RS 可吸收；不能把它直接写成 ICI 来源 |
+| 独立用户 CFO | 未补偿压力点 BER 为 `[0,0.01365,0.27307,0.25869]`；基础补偿后为 `[0,5.87e-5,9.49e-4,0]` |
+| CFO 估计边界 | 0.5 ms 跨 slot 相位差的无模糊范围为 ±1 kHz；750 Hz 告警、±800 Hz 压力门不会解决真正的相位解缠 |
+| `cond(Hhat)` | 是估计信道条件数，包含插值/估计器伪影，不能称为真实复合信道条件数 |
+| Wiener 相噪 | 正确锚定为 `L(f)=sigma² Fs/(4π²f²)`；它对应自由振荡器，锁定 RX-PLL 在 Phase 2 单独建模 |
+| Phase 1 图 | smoke 图仅验证维度和物理趋势，不承担论文统计结论 |
 
-`captures/type1_direct_20260713_155645/type1_direct_results.mat`
+Phase 1 最重要的物理结论是：**真正需要算法处理的是 DM-RS 不能吸收的时变残余，
+而不是静态器件参数本身。** 这直接定义了 Phase 2 的研究对象。
 
-| 项目 | 实测值 | 说明 |
-|---|---:|---|
-| 持续时间 | 60.095 s | TX 连续运行且四路 underflow=0 |
-| 已解码帧数 | 6041 | 约 100.5 frame/s |
-| `dropNew` | 0 | 没有软件 FIFO 丢帧 |
-| 最终/峰值 pending | 10 / 517 block | 约 10 ms / 517 ms |
-| 硬件事件增量 | 全 0 | 四路 overflow/count/timeout 均无异常增量 |
-| `extractMs` | 2.142 ms | 平均每 10 ms 帧 |
-| `fftMs` | 5.141 ms | 平均每 10 ms 帧 |
-| `phyMs` | 1.943 ms | 平均每 10 ms 帧 |
-| `totalMs` | 9.380 ms | 小于 10 ms；约 0.62 ms 平均预算裕量 |
-| 各层 bit errors | `[16, 29, 1, 19]` | 每层分母为 `6041 × 159120` bits |
-| 各层 BER | `[1.66e-8, 3.02e-8, 1.04e-9, 1.98e-8]` | 极低但**不是严格零误码** |
-| 时间审计 | 116 条、overflow=0、invariant=1 | 每条均满足 frame timestamp 位于对应 DMA block 内 |
+## Phase 2：时变损伤、恢复算法与集成边界
 
-本轮证明队列、时延和 timestamp/sequence 一致性均正常；但是严格“60 秒零误码”
-尚未达到，不能把上述 BER 当作零误码验收。继续优化应以同一参考帧的 MATLAB
-基线为准，而不能仅降低时延。
+Phase 2 已完成并冻结。其逻辑闭环是：时变损伤使 BER 退化 → 测量可恢复结构 →
+ICI-DF/信道修复尝试恢复 → 在 flat、TDL、full-stack 和 OTA 上分别报告成功与 no-go。
 
-## 精度与 BER 对照结论
+### 1. 时变开关与相关时间
 
-`type1_compare_direct_stages.m` 在同一 PSS 锁定 OTA 帧上得到：
+建立时间扩展为 `tau(t)=tau0 × [1 + slow(t) + fast(t)]`；fast 项支持 i.i.d. 或
+AR(1)/OU 相关时间，另有独立亚样点 sampling-boundary jitter。`tau_c` 的实测 lag-1
+与 `exp(-Ts/tau_c)` 命中 3--4 位。
 
-| 对照 | raw bit errors | 平均 EVM |
-|---|---:|---:|
-| 标准 MATLAB `type1_analyze` | 0 | 1.925% |
-| MATLAB 默认 OFDM + C PHY | 0 | 2.111% |
-| MATLAB CP-end OFDM + C PHY | 0 | 2.377% |
-| native-ring C FFT + C PHY | 0 | 2.377% |
+在相同边缘方差下，标准 BER 随 `tau_c` 从近 i.i.d. 的约 `1.7e-3` 上升到
+1 µs 的约 `8e-3--1.1e-2`。因此器件约束必须包含抖动 PSD/相关时间，不能只给 RMS。
 
-native-ring C grid 相对 MATLAB CP-end grid 的 NMSE 为 `-115.63 dB`，C/MATLAB
-CP-end H NMSE 为 `-115.91 dB`，raw bit errors 完全一致。这说明固定 C FFT、
-single 精度和 C PHY 并未在正确对齐的单帧上引入可观察误码。
+### 2. ICI-DF 与器件包络
 
-MATLAB 默认 `nrOFDMDemodulate` 窗口与当前 C 的 CP-end 窗口不同；二者 grid/H
-NMSE 约 `-46 dB`，最大 EVM 差约 `0.708%`。尝试用“简单 CP 中点”模拟 MATLAB
-默认窗口会产生约 `+3.07 dB` grid NMSE 且 bit errors 不一致，因此不可直接替换。
+隔离 flat anchor 上，Q=6/12/24 的 soft ICI-DF 相对 BER 降低约
+36.9/47.9/53.2%；Q=12 的 1/2/3 次迭代降低 47.9/52.1/57.9%，对应
+`eta=0.658/0.716/0.795`。soft 相对 hard 额外降低约 8.5%。
 
-已定位并修复过的实时错误包括：
+![ICI-DF 的 Q、迭代和 SNR 统计](docs/images/phase2_ici_df_statistics.png)
 
-- 以绝对 timestamp `% 4` 选切换天线：已改为相对 DMA block 起点的四相位；
-- 仅每 5 s 校正 PSS timestamp：已改为 0.5 s 窄窗 PSS/CFO/时间健康检查；
-- 时间校正跨 DMA block 后的无符号 timestamp 下溢：已加入跨块归一化与审计。
-- frame-PHY 第 3 输出曾恒为零：现按实际 DM-RS RE 残差计算噪声方差；
-- CFO 曾在每 0.5 ms slot 重置相位：现以 10 ms active frame 为连续相位基准；
-  四个虚拟 RX 间 8.138 ns 的固定时偏作为每 RX 常相位保留在 DM-RS 估计的 H 中，
-  避免无收益的逐 RE 旋转；
-- 开关相位现由 `cfg.switchPhaseOffset` 明确校准（默认 0），`snapshotvirtual`、
-  FIFO 与 direct consumer 共用同一 virtual-to-physical RX 映射，不随 PSS 重锁变化。
+图由 `type1_run_phase2_ici_df_statistics.m` 生成，表示隔离机制锚点，不能直接外推到
+TDL/full-stack。
 
-## 结果文件与验收建议
+![ICI-DF 器件规格包络](docs/images/phase2_device_envelope.png)
 
-`type1_rx_direct.m` 每轮保存：
+flat anchor 的 `BER<=1e-2` 下，soft-DF 对 `tau_c=1 µs` 快抖容限的保证放宽
+`>1.25×`，插值点估计约 1.3×；该倍率没有迁移到 R14 TDL 高基线场景。
 
-```text
-captures/type1_direct_YYYYMMDD_HHMMSS/type1_direct_results.mat
-```
+### 3. TDL 与 full-stack 集成边界
 
-其中 `summary` 包含 `status`、`eventDelta`、`timingAudit` 和
-`timingAuditInvariant`。连续 BER 只有在以下条件同时满足时才有效：
+在最终 10-realization TDL 平均中，Q=12、3 次 soft DF 将条件 BER
+`0.16567 → 0.16046`，相对降低 3.15%，9/10 seed 改善。Q=24 回落到 1.30%，表明
+频选深衰下估计噪声与捕获带宽存在偏差/方差折中。
 
-1. `dropNew == 0`；
-2. 硬件 overflow/timeout 增量为 0；
-3. `timingAuditInvariant == true` 且 `timingAudit.overflow == 0`；
-4. pending 不呈持续正斜率；
-5. TX 清理日志确认 cyclic TX 已关闭。
+![TDL 最终 Q、迭代、SNR 和器件包络](docs/images/phase2_r14_final_curves.png)
 
-严格零误码验收还应要求四层 `status(6:9)` 全为 0；当前最新 60 s 测试不满足
-这一额外条件。
+full-stack 的三次预注册集成门均未通过。真值层约 64% ICI capture 证明信息可恢复，
+但实际兑现同时受 `Hhat` 质量和模拟状态可观测性限制；received-drive 两个 seed 的
+gap closure 为 10.89%/40.65%，跨 realization 不稳定。因此 B 线冻结为集成边界，
+没有把单 seed 正结果升级为默认实时接收机。
+
+![隔离 TDL 与 full-stack 集成边界](docs/images/phase2_r14_integration_boundary.png)
+
+### 4. RX-LO 拓扑与 CPE
+
+RX 相噪采用有界 OU/单极 PLL 模型，比较开关后公共单 LO 与开关前独立 4-LO。
+预注册的“公共 LO 必然更好”被数据否定：慢 PLL 下独立 LO 可通过 phase-noise
+averaging 获益，病态信道中排序又可能反转；一个标量 CPE 只能部分修复公共分量，
+不能给出统一规格倍率。
+
+![公共单 LO、独立 4-LO 与 CPE](docs/images/phase2_rx_lo_topology.png)
+
+### 5. PSS acquisition 与开关成本归因
+
+100-seed acquisition-only 扫描把噪声 waterfall 与高 SNR realization 平台分开。
+单帧 combined 在 8--26 dB 维持 52% 成功率；4 帧非相干累积在 20/26 dB 提升到
+70%，但仍留下 false-peak 平台。
+
+![PSS acquisition 概率与多帧累积](docs/images/phase2_pss_acquisition_probability.png)
+
+20 dB 的 switch-off / ideal-interleaving / impaired-on 成功数为 75/76/52：交织结构
+净差 `-1 pp` 不显著，而联合模拟损伤贡献 `24 pp`，McNemar `p=8.05e-7`。
+
+![四相交织结构与开关损伤的 acquisition 成本分解](docs/images/phase2_r14_switch_attribution.png)
+
+### 6. R15 OTA 收官
+
+R15 采集 25/30/35 dB gain 各 5 段合格 20 ms raw122；15/15 段 PSS/PBCH/EVM gate
+通过，同 raw122 的 ideal/impaired 两支均无 bit errors，EVM² 增量方向与 matched-SNR
+离线预测 15/15 一致。
+
+正式功率域中位增量为 OTA `0.83035`、离线 `0.39315`，倍率 2.112，超过预注册
+2× 门，因此 ratio no-go。三档实测 SNR 全部重叠在 33--43 dB，不能称为多 SNR
+标定。最终只保留：**高 SNR 单簇功能+趋势验证，且离线模型偏乐观约 2×。**
+
+## Phase 3：M>N 单链端口选择平台
+
+Phase 3 的最终目标是把 `M=N=4,S=I` 扩为受物理约束的 `M>N` 二值 BABF/端口选择。
+Part A 已通过 R16，Part B 的第一道穷举标尺已完成：
+
+- 单链在代码中严格坍缩为一列标量流
+  `y[k]=sum_m S[m,q(k)]r_m[k]`，随后才按 N 相去交织；
+- `S∈{0,1}^{M×N}` 负责 `Htilde=S^T H` 的信道数学；规范的
+  `A[m,n,q]=S[m,n]1[q=n]` 负责码周期、覆盖、占空比、相位归属和因果切换审计；
+- 同一物理端口可以在不同码相进入多条虚拟链，但同一码相把一个端口扇出给多个链标签
+  会以稳定标识 `type1:Phase3IllegalFanout` 拒绝；
+- M 端口 TDL-A 的 RX 相关矩阵由半波长 ULA 位置和
+  `J0(2*pi*d/lambda)` 生成，不允许用与孔径无关的任意相关系数。
+
+R16 seed `20260716` 的正式回归结果：旧/新 stitched 和 virtual 均逐位一致；M=8 理想
+标量链路相对误差为 0，`S^T H` 相对误差 `1.69e-16`；占空比守恒/超限拒绝和非法同相
+扇出拒绝均通过。
+
+R17 把门 1 可行集冻结为 M=8、N=4、每链恰好 2 端口、每端口只属于 1 条链，共
+2520 个调度。20 个成对 TDL-A seed 中 19 个优于 `M=4,S=I`，全 612-tone 的 min-user
+SINR 中位增益 `+2.420 dB`，bootstrap 95% 区间 `[+1.863,+3.613] dB`，单侧符号检验
+`p=2.00e-5`，因此门 1 通过。固定相邻配对的中位增益反而为 `-1.030 dB`，说明收益来自
+端口选择而非简单增加端口；seed `20261718` 仍有 `-0.050 dB` 反例，证明强制使用全部
+8 端口不保证逐 realization 获益。
+
+![Phase 3 R17 M=8 穷举标尺](docs/images/phase3_r17_exhaustive.png)
+
+R18 允许端口关闭并令每链端口数可变。F1（`Dmax=1`）共有 166824 个精确候选，包含
+M4 原解和 R17 全部 2520 个配对。20 个成对 TDL seed 上，F1 穷优 20/20 不低于 M4，
+贪婪 20/20 胜 M4并保留穷优增益的中位 **92.4%**，Gate 2 通过；全 612-tone 的 F1
+穷优/贪婪中位增益分别为 `+3.693/+3.238 dB`。固定相邻、FAS 单端口和随机基线的
+51-tone 中位增益分别为 `−1.033/+0.378/−0.973 dB`。
+
+F2 允许一根端口进入两条不同码相的链，但没有形成稳定额外收益：贪婪相对 F1 穷优
+仅 5/20 为正、中位 `−0.203 dB`；flat 中位为 0 dB。局部松弛量化给出很小的
+`+0.053 dB` 中位增量且仅 10/20 为正，它不是经证明的全局上界。因此当前头条是
+“端口关停 + 在线贪婪有效”，不是“码叠加稳定获益”。
+
+![Phase 3 R18 Gate 2](docs/images/phase3_r18_gate2.png)
+
+R19 把同一批 M=8 调度送入完整 122.88 MS/s 标量开关和接收机，冻结 25 dB 隔离、
+20 ns 建立、`fast=0.2`、OU 相关时间 1 us，并把 acquisition failure 和扫描写入
+`P_acq*(1-scanFraction)*(1-BER)`。损伤后 M4/F1穷优/F1贪婪/F2贪婪的 acquisition
+为 `[20,19,19,19]/20`；成功帧平均 decoded BER 为 `[3.20,1.03,1.15,1.20]%`，说明
+数据链选择收益仍在。但按每 100 ms 多扫一个 10 ms 帧，三种 M8 臂相对 M4 的有效
+吞吐量分别为 `−0.1218/−0.1229/−0.1233`，1 s 更新敏感性仍为负，故当前 M=8、纯
+min-SINR 选择器在固定 QPSK 吞吐域 **no-go**。但原始 §7.4 的 SINR-quality 分解为
+`4.28−1.46−0.22−0.46=+2.14 dB`，因此 SINR Gate 3 实际通过；这两个裁决必须并列。
+
+![Phase 3 R19 Gate 3](docs/images/phase3_r19_gate3.png)
+
+固定 QPSK no-go 不能外推成“端口选择无效”或“M=12/16 也必然失败”：它准确定位出下一个
+算法缺口——选择目标必须同时约束 PSS/acquisition 风险，而不能只优化数据 RE 的
+min-SINR。
+
+R20 用同一 M16 TDL realization 的前 4/8/12/16 个端口做严格成对比较。50 个 seed 的
+四帧 acquisition 为 `[46,47,48,48,47]/50`；前 20 个完整解码中，M4/M12/M16 的
+EVM-quality 中位数为 `5.44/9.58/9.99 dB`，成功帧平均 decoded BER 为
+`3.84/0.83/0.61%`。冻结 CQI-style AMC 链路抽象后，1 s 更新的 M8-aware/M12/M16
+净增益为 `+0.449/+0.614/+0.710 bit/s/Hz`，AMC 门限整体移动 ±2 dB 时 M12/M16 仍为
+正，因此 Gate 3 重测通过。50 ms 过快更新时 M12/M16 因扫描开销回落到
+`−0.012/−0.295`，100 ms 才转正，说明端口规模收益必须与信道更新周期联合设计。
+
+![Phase 3 R20 AMC 与 M 扩展](docs/images/phase3_r20.png)
+
+同步结果必须单独看：M8-aware 相对 M8-data 只有 1 次 rescue、0 loss，McNemar `p=1`；
+一帧与四帧 PSS 计数完全相同。故当前不声称同步感知选择显著有效，也不声称重复同一高
+SNR realization 能消除假峰。AMC 是冻结的链路抽象而非真实 16/64QAM 解码；选择器读取
+oracle TDL 信道，也尚不是在线扫描实现。
+
+R21 给出二值 S 下的闭式理论：`G=S^T H`、`Rn=sigma^2 S^T S`，逐流 LMMSE SINR 为
+`1/[(I+G^H Rz^-1 G)^-1]uu-1`，联合高斯上界为 `log2det(I+G^H Rz^-1 G)`。它对 R20
+冻结目标的最大误差为 `8.88e-15 dB`。M4/M8/M12/M16 的 50-seed 中位 min-user 理论
+rate 为 `3.093/4.226/4.847/5.263 bit/s/Hz`，相对 M4 分别在 49/49/50 个 seed 胜出。
+该 rate 不含实际全波形开关残差，不能替代 R20 AMC goodput。
+
+![Phase 3 R21 闭式速率与理论边界](docs/images/phase3_r21_theory.png)
+
+理论也揭示边界：J0 几何下正权二值合并随间距/孔径非单调；固定 round-robin 在 M=24、
+0.125-lambda 间距时为 `-1.78 dB`，0.25-lambda 时为 `+2.59 dB`。R20 所选 S 的无条件
+几何平均增益约 0 dB，说明收益来自观察信道后的端口选择和条件数改善，而不是固定集合
+天然有阵列增益。该理论是标准 LMMSE 的严谨表征和上下界，不包装成新容量定理；R20
+选择器继续明确标为读取真实 TDL 信道的 oracle 上界，不声称已经完成在线扫描实现。
+
+R22 用 GreenMO 原论文的 RFIC/ADC/开关锚点和同一派生基带口径，对本文、GreenMO-like、
+DBF、部分连接 HBF 和全连接 HBF 建立统一能量账本。M=16、N=4、1 s 更新时，五者平均
+RX 功耗为 `1.925/1.925/12.260/3.347/3.827 W`；同一理想高斯 LMMSE sum-rate 分子下，
+能效为 `200.1/206.2/45.5/88.3/108.5 Mbit/J`。本文相对 DBF 的 low/nominal/high
+组件敏感性能效比分别为 `5.22×/4.39×/4.06×`，正号不依赖单一标称档。
+
+![Phase 3 R22 统一能效与扫描周期](docs/images/phase3_r22_energy_efficiency.png)
+
+扫描没有免单：本文 M=16 的更新周期从 50 ms 放宽到 100 ms/1 s/10 s 时，能效由
+`82.5` 增至 `144.4/200.1/205.7 Mbit/J`。固定 M=16、活动流 N=1→4 时，本文功耗从
+`0.721→1.925 W`，DBF 从 `12.099→12.260 W`；但本文扫描能量为 `0.108→0.058 J/次`，
+说明低负载仍需为更多端口组扫描付费。
+
+![Phase 3 R22 能量正比与扫描能量](docs/images/phase3_r22_energy_proportionality.png)
+
+这不是硬件功率计测量。跨架构结果统一使用理想速率；本文另外给出的 R20 四流全栈
+AMC 能效仅为 M4/M8/M12/M16 的 `38.4/55.5/61.7/65.2 Mbit/J`，不能和缺少同等全栈
+解码的 DBF/HBF 理想值直接排名。GreenMO-like 是相同电路包络上的局部贪婪参考，不是
+GreenMO 算法/原型复现；完整参数、来源和口径见
+[`PHASE3_ENERGY_MODEL.md`](PHASE3_ENERGY_MODEL.md)。
+
+## 统计与表述纪律
+
+- 零错误只报告 `-log(0.05)/Nbits` 等 95% 上界，不写成已证明 BER=0；
+- paper 点使用预先冻结的错误数/最大 bits 停止规则；
+- standard/DF 只在同 seed、同信号/信道/噪声 realization 上配对；
+- acquisition failure 必须进入 outage 分母，条件 BER 与 outage 分开报告；
+- `cond(Hhat)`、genie、truth replay、capture fraction 都不能冒充实际接收机 BER；
+- 任何未过预注册门的算法不进入默认实时路径。
+
+## 结果资产与文档
+
+| 资产 | 内容 |
+|---|---|
+| `captures/type1_direct_*/type1_direct_results.mat` | 实时 pending/dropNew/BER/时延/硬件事件/timestamp 审计 |
+| `type1_phase1_*/phase1_sweeps.mat` | Phase 1 单变量与二维结构扫描 |
+| `type1_phase2_*/phase2_*.mat` | Phase 2 paired seed、BER/EVM/outage、门禁和 checkpoint |
+| `type1_phase3_part_a_*/phase3_part_a_r16.mat` | Phase 3 Part A 四条代数回归、几何相关与稳定拒绝标识 |
+| `type1_phase3_r17_*/phase3_r17_exhaustive.mat` | M=8 2520 候选、逐 seed 选优矩阵、全带 SINR/速率与 Gate 1 统计 |
+| `type1_phase3_r18_*/phase3_r18_gate2.mat` | F1 精确穷优、F1/F2 在线算法、flat/TDL 配对与 Gate 2 统计 |
+| `type1_phase3_r19_*/phase3_r19_gate3.mat` | M=8 理想/损伤全波形、acquisition/BER/EVM、SINR Gate 通过与固定-QPSK no-go 双重裁决 |
+| `type1_phase3_r20_*/phase3_r20.mat` | 50-seed PSS、M=4/8/12/16、AMC/扫描周期、固定-QPSK敏感性与 Gate 3 重测 |
+| `type1_phase3_r21_*/phase3_r21_theory.mat` | R20 50-seed 闭式复现、MMSE/log-det 速率、残余谱界和 J0 几何扫描 |
+| `type1_phase3_r22_*/phase3_r22_energy.mat` | 50-seed 统一理想速率、组件功耗、扫描能量、full-stack AMC 锚点、敏感性与能量正比曲线 |
+| `data/type1_r15_ota_*/` | R15 raw122、capture meta、paired report 与 EVM² 审计；原始 IQ 不进入 Git |
+| [`docs/images/`](docs/images/) | 本 README 内嵌的冻结实验图和架构图 |
+| [`HANDOFF.md`](HANDOFF.md) | 远端环境、实时状态和交接边界 |
+| [`PHASE2_MIDTERM_REPORT.md`](PHASE2_MIDTERM_REPORT.md) | Phase 2 中期定位与收官附录 |
+| [`PHASE3_PLAN.md`](PHASE3_PLAN.md) | Phase 3 冻结信号模型、物理约束、三门和执行顺序 |
+| [`PHASE3_ENERGY_MODEL.md`](PHASE3_ENERGY_MODEL.md) | R22 统一功耗组件表、扫描能量公式、公平比较口径、来源和不可外推边界 |
+| [`SYSTEM_EXPLAINER.md`](SYSTEM_EXPLAINER.md) | 面向通信同行的系统原理、非理想性影响、结果边界与后续工作说明 |
 
 ## 提交变更记录
 
-后续每次代码修改与提交都必须在本节追加一行，格式为“版本 -- 主要变更”。
+每次代码或文档修改都在本节追加一行。历史细节折叠保存，避免遮挡工程首页。
 
-- `cmex-2026.07.13.1` -- 新增两阶段启动的软件 ring 丢弃、startup timestamp/sequence 审计与 pending 离线对比；实时星座图改为始终绘制均衡结果并移除 `NO SIGNAL` 覆盖；更新启动队列实测说明。
-- `cmex-2026.07.13.2` -- 修复 frame-PHY 死噪声输出；CFO 改为帧内连续相位，虚拟 RX 固定时偏由 DM-RS H 吸收；新增固定可校准 switch-phase 映射，完成 OTA grid/H/EVM/bit 等价验证。
-- `cmex-2026.07.13.3` -- 新增 `RUN_COMMANDS.md`，集中记录 sudo 板卡运行的可视化 `type1_rx_live` 与无图形 `type1_rx_direct` TX/RX 完整命令及所用空口波形。
-- `cmex-2026.07.13.4` -- 新增硬件无关的 Phase-0 离线主干：reference→独立用户损伤接口→4×4 信道/AWGN→四相数字开关→完整 MATLAB PSS/DM-RS/RZF/BER；明确其为全数字受控开关仿真锚点。
-- `cmex-2026.07.13.5` -- 增加独立用户 CFO/带限定时/功率/Wiener 相噪与相干泄漏/因果建立时间模型、模型代数验证和通用离线实验入口；记录静态周期性开关损伤可被 DM-RS 估计的边界，禁止将其直接归因为 ICI。
-- `cmex-2026.07.14.1` -- 增加过渡时钟抖动与 Phase-1 六条单变量、四张双变量离线扫描器；零误码以统计上界绘图，静态可校准项与残余时变项分开报告，完成 smoke 级 MATLAB/PNG/MAT 验证。
-- `cmex-2026.07.14.2` -- 新增 `EXPERT_REVIEW.md`，集中说明远程/离线/OTA 运行命令、输出结构、已验证数据、统计限制、模型边界与核心代码职责，供专家审议；未提交。
-- `cmex-2026.07.14.3` -- 按专家审议将 smoke/pilot 二维网格提升至 3×3/5×5；新增基于跨 slot DM-RS 的逐用户残余 CFO 估计与时变 RZF 列相位补偿，建立可分离多用户 BER 基线；未提交。
-- `cmex-2026.07.14.4` -- 新增 3GPP TDL-A+Tx/Rx 指数相关离线信道与自由振荡 Wiener 相噪 dBc/Hz 锚定；OTA 25 dB/5 ns 交叉验证暴露现有 startup raw IQ 基线失效，已明确标记为未通过并要求重采有效 IQ；未提交。
-- `cmex-2026.07.14.5` -- 新增同一段 raw122 OTA IQ 的 ideal/25 dB+5 ns 成对注入桥接器：两支均经过 `type1_apply_switch_impairments` 和完整接收链，保存/打印 PSS、PBCH、BER、EVM、`cond(Hhat)` 与配对差值；基线不合格时禁止将 OTA/离线增量称为交叉验证；未提交。
-- `cmex-2026.07.14.6` -- 新增 TX/RX 稳定后才落盘的 raw122 候选采集器，并以 PSS、PBCH/MIB 和 ideal EVM 质量门限筛选；完成同一 OTA IQ 的 25 dB/5 ns 配对注入，单点验证同步/BER 保持正常、`cond(Hhat)` 相对增量与离线同向，专家报告明确其为趋势验证而非绝对 EVM 校准；未提交。
-- `cmex-2026.07.14.7` -- 修正自由振荡 Wiener 相噪锚定 3 dB 系数；给跨 slot 残余 CFO 补偿加入 ±1 kHz 无模糊范围、750 Hz 告警和离线 ±800 Hz 防混叠门限；Phase-1 条件数统一标为估计量 `cond(Hhat)`，并以固定 3 帧/seed 重写多用户 BER 引用；未提交。
-- `cmex-2026.07.14.8` -- 启动 Phase 2 A1/A2：开关模型新增 `tau(t)` 慢漂/快抖和独立采样边界亚样点抖动（零抖动严格恒等、越界高斯尾部显式计数截断）；新增代数回归及固定 seed 时变损伤扫描入口，慢漂、快抖和边界抖动分开报告；未提交。
-- `cmex-2026.07.14.9` -- 新增 DM-RS 残差协方差加权（预白化等价）RZF 与理想链路退化回归；首个快抖点的空间白化未带来可测 BER 增益，已记录为负基线，后续需建模跨符号/频率 ICI 协方差而非宣称算法已恢复；未提交。
-- `cmex-2026.07.14.10` -- 按频域残差诊断将快抖由 raw-sample i.i.d. 扩展为可配置 AR(1)/OU 相关时间；记录 τ 下限触发比例，新增已知 β 的 genie IIR 逆滤波上界和 `0/8 ns/100 ns/1 µs` 相关性扫描。DM-RS in-sample 残差白化保留为负基线，后续仅在可测带状 ICI 下研究交叉验证协方差/MMSE；未提交。
-- `cmex-2026.07.14.11` -- 按 R3 撤回 100 ns“已出现结构”的表述，带状 MMSE 降级为预期 0.002 dB 的负对照；新增 τc=1 µs 每符号共享 ICI 核的偶/奇交叉拟合判决反馈消除、理想退化回归与标准/DF/genie 三方 MAT 报告，获得首个正向 BER 恢复基线；未提交。
-- `cmex-2026.07.14.12` -- 按 R4 新增 ICI-DF 的原始观测重构式 1--3 次迭代、严格成对 Q/迭代/SNR 统计扫描和 PSS 获取失败留痕；paper 档在多 seed 下确认 Q=6/12/24 的 BER 降低 36.9/47.9/53.2%、3 次迭代 η=0.795，并区分可同步区间内 DF 近零收益与 −10--−8 dB PSS 门限；未提交。
-- `cmex-2026.07.14.13` -- 按 R5/R6 显式区分首轮硬判决与后续 soft/hard DF，完成 hard-vs-soft 消融（soft 额外降低约 8.5%）；新增 20 dB fast-jitter×τc 规格包络及 τc=1 µs 加密点，修正 BER≤1e-2 的保守容限放宽为 >1.25×（插值约 1.3×，非 1.5×），并记录 floor 截断与零错 95% 上界；未提交。
-- `cmex-2026.07.14.14` -- 按 R7 实现 CFO 相位斜坡感知的组合 soft-DF、只替换新增动态 beta 的 L3 genie、L0--L3 阶梯、8-seed TDL-A paired-bootstrap 与预注册 go/no-go；pilot 中 4/8 seed 采集失败且有效 seed 的 gap closure 全为负，严格判定 no-go、未启动 paper，并保存信道病态/per-user timing 诊断；未提交。
-- `cmex-2026.07.14.15` -- 按 R8 新增两段式逐用户 timing 去斜/重估信道、主/压力场景、中断及 PSS/NID2/PBCH 审计，并修复组合 DF 首轮判决误用旧接收路径；压力 seed 的 `cond(Hhat)` 中位 106.4→59.0、平均 BER 25.7%→3.21%，主场景 5 个有效 seed 的 L0/L1/L2/L3 中位为 0.516/1.845/1.777/0.516%，但 gap closure 中位仅 3.54%、3/8 假峰中断，故仍为 no-go、未运行 paper；未提交。
-- `cmex-2026.07.14.16` -- 按 R9/R10 新增同 TDL/开关 realization 的逐 layer 真值重放与四支分解：双 bank 真值捕获 47.5/51.3% 验证跨相位模型缺项，判决污染非主导、data-aided 对角 HTrue 支为最大上界，H2 双 seed 门禁未过故禁止反功率 LS；实际 50 系数双 bank BER 反而恶化而不保留；核验现有 PSS 已做四链非相干合并，成功数 5/8 与最佳固定单链相同且仍有假峰；未提交。
-- `cmex-2026.07.14.17` -- 按 R11 实现 DDCE 数据判决引导信道重估、Q=12 下 100→25 real DOF 的共轭对称物理 B 核、二者门控组合及可选 PSS 峰位投票；DDCE 两 seed BER/EVM 均改善但 gap 增量仅 1.6/4.5pp 未过门，真值 constrained B 以 <0.5pp 捕获损失通过，但实际状态代理使 physical/组合 BER 反噬而拒绝保留；PSS 投票由 5/8 提至 6/8 并通过 smoke、默认仍为原 combined；未提交。
-- `cmex-2026.07.15.18` -- 按 Phase 2 中期 R11 收束实现仅依赖 stitched ADC 与名义 beta0 的 received-drive 共轭核：20 dB 真值 capture 63.65/64.35%，实际 BER 两 seed 均改善但 gap 增量 8.78/32.60pp 因第一点未达 10pp 而严格冻结 B 线；完成 PSS 30-seed×3-SNR 配对，vote 18/19/19 对 combined 17/17/17 但 McNemar p=1/0.5/0.5 不显著，故保持可选而不升默认；未提交。
-- `cmex-2026.07.15.19` -- 按 R12 新增独立随机流的有界 OU/单极 RX-PLL、开关后公共单 LO/开关前独立 4-LO 注入及每符号一参数 CPE；四项恒等/PSD 回归通过，5×3 paper-stop 网格否定“公共 LO 必然更低 BER/自动放宽规格”，但确认独立+CPE 增量 EVM 功率随相位方差缩放（R2=0.990--0.992）及公共状态 oracle 可完全恢复；保留 memoryless 周跳审计并以 DM-RS 锚定连续展开修正正式 CPE，温和栈单点不重开 B 线；未提交。
-- `cmex-2026.07.15.20` -- 按 R13 新增与 `nrTimingEstimate` 机器精度等价的复 PSS 相关、100-seed×11-SNR acquisition-only 配对统计、Wilson/McNemar 及 falsePeak/miss/windowClip 审计；单帧在 8--26 dB 呈 52% realization 平台，4 帧非相干累积在 20/26 dB 提至 70% 且显著但仍有假峰天花板；20 dB switch-off/on 为 75/52、配对 24/1（p=1.55e-6），量化经开关同步净代价；默认实时获取器未改，未提交。
-- `cmex-2026.07.15.21` -- 按 R14 新增 100-seed 理想开关 on 归因，off/ideal/impaired PSS 成功为 75/76/52，证明交织结构净差 −1pp 不显著而已建模模拟损伤贡献 24pp（25/1，p=8.05e-7）；完成满足 paper-stop 的 TDL 多 realization Q/迭代/SNR/器件包络与集成边界图，Q12/3次 soft DF 在 20dB 将 BER 0.16567→0.16046（相对 3.15%，9/10 seed 改善），i.i.d./8ns 区域轻微反噬、1µs 峰值恢复约3.6%，全部 acquisition outage=0；默认实时接收机与 B 线冻结不变，未提交。
-- `cmex-2026.07.15.22` -- R15 新增可指定 rxGain/标签的合格 raw122 采集、25dB/20ns/20ps/100ps 同段成对注入、逐段 matched-SNR TDL 预测与双 EVM 口径审计；实采 25/30/35dB 各5段，15/15 PSS/PBCH 合格、ideal/impaired 均零误码且增量同号，EVM² OTA/离线中位倍率2.112略超2×门，而专家字面 RMS-EVM 倍率1.957通过，故保留 `adjudicationRequired`、暂不打 Phase 2 freeze tag。
-- `phase2-theme-1` -- 提交离线 reference→TDL/AWGN→时变开关主干、AR(1) 建立抖动/边界位移、真值重放与 genie 上界基础设施。
-- `phase2-theme-2` -- 提交空间白化负基线、逐符号 ICI-DF、hard/soft/迭代统计与器件规格包络实验族。
-- `phase2-theme-3` -- 提交全栈 CFO/timing 感知集成、DDCE/约束核/received-drive 分解、R10–R14 TDL 边界与最终曲线。
-- `phase2-theme-4` -- 提交有界单极 RX-PLL、公共单 LO/独立 4-LO、CPE 连续展开与周跳/PSD 验证。
-- `phase2-theme-5` -- 提交复 PSS 相关、峰位投票、2/4 帧非相干累积及 100-seed acquisition waterfall/平台统计。
-- `phase2-theme-6` -- 提交 R15 三档 OTA 合格采集/同段注入/matched-SNR 与双口径审计，以及 Phase 2 审议、模型、复现和交接文档；EVM² no-go 保留，未打 freeze tag。
-- `cmex-2026.07.15.23` -- R15 最终裁决定死预注册 EVM²，2.112× ratio no-go，不采纳 RMS 的1.957×；三档 gain 归并为33–43dB高SNR单簇，OTA主张缩放为15段功能+趋势验证并记录离线模型偏乐观约2×，明确禁用“多SNR标定通过”；Phase 2 按真实no-go状态关闭并创建带说明的freeze tag。
+<details>
+<summary>展开完整变更记录</summary>
 
-### `cmex-2026.07.13.2` 详细变更与验证
+- `cmex-2026.07.13.1` -- 新增两阶段启动 ring 丢弃、timestamp/sequence 审计和 pending 对比；星座图始终绘制均衡结果。
+- `cmex-2026.07.13.2` -- 修复 frame-PHY 噪声输出；CFO 改为帧内连续相位；固定 switch-phase 映射并完成 C/MATLAB 等价验证。
+- `cmex-2026.07.13.3` -- 新增 `RUN_COMMANDS.md`，集中维护实时 TX/RX 与离线复现命令。
+- `cmex-2026.07.13.4` -- 新增硬件无关 Phase 0 reference-to-BER 主干。
+- `cmex-2026.07.13.5` -- 增加独立用户损伤、相干泄漏、因果建立时间和通用离线入口。
+- `cmex-2026.07.14.1` -- 增加 Phase 1 六条单变量、四张二维扫描和零错上界绘图。
+- `cmex-2026.07.14.2` -- 新增 `EXPERT_REVIEW.md` 作为统一实验与审议留痕。
+- `cmex-2026.07.14.3` -- 二维网格提升到 smoke 3×3 / pilot 5×5；新增逐用户 CFO 基础补偿。
+- `cmex-2026.07.14.4` -- 新增 TDL-A、空间相关和 Wiener 相噪锚定。
+- `cmex-2026.07.14.5` -- 新增同 raw122 的 ideal/impaired OTA 配对桥接器。
+- `cmex-2026.07.14.6` -- 新增 PSS/PBCH/EVM-gated 后稳定期 raw122 采集器。
+- `cmex-2026.07.14.7` -- 修正相噪锚定 3 dB 系数、CFO 混叠门和 `cond(Hhat)` 表述。
+- `cmex-2026.07.14.8` -- Phase 2 加入时变 tau、快慢抖动和采样边界位移。
+- `cmex-2026.07.14.9` -- 新增白化 RZF 负基线与理想退化回归。
+- `cmex-2026.07.14.10` -- 快抖扩展为 AR(1)/OU 相关时间，加入 tau-floor 和 beta-genie。
+- `cmex-2026.07.14.11` -- 新增逐符号 ICI 核交叉拟合判决反馈接收机。
+- `cmex-2026.07.14.12` -- 新增 Q/迭代/SNR 成对统计；确认 flat anchor 的 36.9--57.9% 恢复。
+- `cmex-2026.07.14.13` -- 完成 hard/soft 消融和器件包络，容限保证放宽 >1.25×。
+- `cmex-2026.07.14.14` -- 实现 CFO 感知 full-stack L0--L3 阶梯并按门判 no-go。
+- `cmex-2026.07.14.15` -- 加入 timing 去斜、重估信道和完整中断审计。
+- `cmex-2026.07.14.16` -- 完成 R10 真值分解、双 bank 上限和 H2 拒绝门。
+- `cmex-2026.07.14.17` -- 实现 DDCE、约束核、组合门和可选 PSS 峰位投票。
+- `cmex-2026.07.15.18` -- 完成 received-drive 收束和 30-seed PSS 投票扩样，B 线冻结。
+- `cmex-2026.07.15.19` -- 新增有界 RX-PLL、公共/独立 LO、CPE 和周跳审计。
+- `cmex-2026.07.15.20` -- 完成 100-seed PSS acquisition、2/4 帧累积和开关成本初测。
+- `cmex-2026.07.15.21` -- 完成 R14 理想交织归因、TDL paper-stop 曲线和集成边界图。
+- `cmex-2026.07.15.22` -- 完成 R15 三档 gain、15 段 OTA 配对和 EVM²/RMS 双口径审计。
+- `phase2-theme-1` -- 提交时变开关模型与 genie/truth-replay 基础设施。
+- `phase2-theme-2` -- 提交 ICI-DF 接收机族与统计。
+- `phase2-theme-3` -- 提交 full-stack 集成、R10--R14 分解与 TDL 边界。
+- `phase2-theme-4` -- 提交 RX-LO 与 CPE。
+- `phase2-theme-5` -- 提交 PSS acquisition 统计。
+- `phase2-theme-6` -- 提交 OTA 收官代码与审议文档。
+- `cmex-2026.07.15.23` -- EVM² 2.112× ratio no-go；Phase 2 按高 SNR 单簇缩放主张关闭并打 freeze tag。
+- `cmex-2026.07.15.24` -- 重构 README 为独立工程首页；新增可复现正式架构图、MEX 下放边界、Phase 0/1/2 递进说明及仓库内嵌的冻结实验图，删除过时的单轮 OTA/精度流水账。
+- `cmex-2026.07.15.25` -- 完成 Phase 3 Part A：M>N 几何相关 TDL、A/S 物理调度、严格标量单链和 R16 四条代数回归；尚未启动端口选择扫描。
+- `cmex-2026.07.15.26` -- 新增面向通信大同行的独立系统说明，按信号链和非理想性来源重组现有成果，并补齐缩写、结果边界和后续工作解释。
+- `cmex-2026.07.16.27` -- R16 通过后完成 R17：M=8/Dmax=1 的 2520 候选 TDL 穷举标尺以 19/20、+2.420 dB 中位增益通过 Gate 1；保留单 seed 负例并冻结 Gate 2/3。
+- `cmex-2026.07.16.28` -- 完成 R18/R19：F1 166824 穷举与贪婪以 92.4% 中位保留通过 Gate 2；F2 码叠加无稳定额外收益；M=8 的 SINR-quality Gate 3 通过而固定-QPSK goodput no-go，并保留两次逐位复现资产。
+- `cmex-2026.07.16.29` -- 完成 R20：新增同步感知 oracle 选择、冻结 AMC 抽象、扫描周期和 M=12/16；50-seed 正式重测以 M12/M16 `+0.614/+0.710 bit/s/Hz` 通过 Gate 3，同时保留同步增益不显著与一次噪声口径作废运行的审计。
+- `cmex-2026.07.16.30` -- 完成 R21 Part D：新增闭式 LMMSE SINR/MMSE与log-det速率、残余谱范数下界和 J0 几何增益；以 `8.88e-15 dB` 误差逐位闭合 R20，并保留孔径非单调和理论 rate 不含全波形残差的边界。
+- `cmex-2026.07.16.31` -- 完成 R22 Part C：冻结 GreenMO 锚定统一功耗表并计入端口扫描；完成本文/GreenMO-like/DBF/PC-HBF/FC-HBF 的 50-seed bits/Joule 与能量正比对照，保留理想/full-stack 双口径和非硬件实测边界。
+- `cmex-2026.07.16.32` -- R22 专家审议通过；按平台/选择/全栈/理论/能效/文档六个主题整理提交，关闭 Phase 3 并打 `phase3-freeze-2026-07-16`，后续转入论文写作。
 
-本版本相对 `6fcdf2a` 的修改如下。
-
-1. **修复 frame-PHY 的噪声诊断输出。**
-   `type1_decode_frame_grid_mex.c` 原先声明但未累计 `ne/nc`，因而第 3 个
-   输出 `noise` 恒为零。现在对每个 slot 的实际 Type-1 DM-RS RE 计算
-   `y - H·r` 残差功率并除以参与统计的 RE 数。此变更不改变 RZF、硬判决或
-   BER 路径，但使噪声诊断与 `type1_dmrs_type1_mex` 的语义一致。
-
-2. **将 direct consumer 的 CFO 从“每 slot 相位复位”改为帧内连续。**
-   `direct_make_grid`、`type1_decode_frame_batch` 以及 grid/H/EVM 对照脚本
-   都以 active 10 ms frame 的连续 virtual-sample 序号计算 CFO 旋转，不再在
-   每个 0.5 ms slot 用 `%15360` 归零。这样 slot 边界不再人为产生 CFO 相位
-   不连续。为保持实时性，C MEX 在 `directstart` 和每次低频
-   `directsetcfo` 时预计算 168,960 点 CFO 复旋表；逐帧热路径只查表相乘，
-   不在 154×4×1024 个样点内重复调用 `sinf/cosf`。
-
-3. **固定并显式配置 virtual-to-physical RX 映射。**
-   新增 `cfg.switchPhaseOffset`（默认 0）和 MEX 命令
-   `type1_yunsdr_rx_mex('switchphase',offset)`。virtual 链 `q` 始终读取物理
-   RX `(q + offset) mod 4`，且 `snapshotvirtual`、FIFO、native direct grid
-   使用同一映射；映射不再随 PSS 锁定点、DMA block 或重新锁定而漂移。旧的
-   reference MAT 不含该运行时字段时，`type1_load_package` 自动补入默认值，
-   不需要重新生成 TX 波形。
-
-4. **固定时偏的处理选择。**
-   四个切换 virtual RX 相差一个 122.88 MS/s 采样周期（8.138 ns）。本版本
-   不在热路径增加逐 RE 的补偿旋转：它在窄带 OFDM 中表现为每个 RX 的固定
-   公共相位，已由 Type-1 DM-RS 的每 RX 信道估计 `H` 吸收。此选择保持当前
-   4×4 RZF 数值等价；若后续采用需要绝对物理天线相位的 M>N/BABF 校准，须以
-   `switchPhaseOffset` 为固定基准，并在校准链中显式处理该相位。
-
-5. **更新验证路径。**
-   `type1_validate_native_ring_grid.m` 和 `type1_compare_direct_stages.m`
-   使用相同的连续 CFO 基准和 switch-phase 配置，避免 MATLAB 对照本身带有
-   slot-reset 假差异。已验证 native-grid 相对 MATLAB CP-end grid 的 NMSE
-   约 `-115 dB`、H NMSE 约 `-115 dB`、EVM 差约 `9e-6%`，逐帧 raw bit errors
-   一致；这确认上述实现修正没有引入可测的 C/MATLAB 栅格或判决偏差。
-
-6. **本版本 60 s OTA 观察（结果目录
-   `captures/type1_direct_20260713_194952/`）。**
-   TX 持续 70 s，四路 underflow 为 0；RX 硬件 overflow/count/timeout 增量全为
-   0，`dropNew=0`，共解码 5,989 帧。5–58 s 的稳态 pending 中位数为 9 ms、
-   P95 不高于约 19 ms，C 平均时延为 extract `1.71 ms`、FFT `5.11 ms`、PHY
-   `2.00 ms`、总计约 `8.99 ms`。约 58.7 s 前的汇总 BER 约 `6.3e-8`。
-   第 59 s MATLAB PSS 健康检查两次超出 ±512 sample 跟踪窗口；该控制面调用
-   暂停了 `directpoll`，pending 在结束时升至 206 ms，且失锁帧被继续硬判决，
-   使包含异常尾段的全程 BER 变为约 `7.1e-3`。因此该测试证明 C 数据面未发生
-   持续时延退化，但也暴露出 PSS 控制面失锁会阻塞消费者；全程 BER 不能作为
-   稳态 BER 指标，必须将该事件单独诊断。
+</details>

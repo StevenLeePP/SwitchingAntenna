@@ -1,6 +1,6 @@
 # 交接文档：Type-A 4T4R C/MEX 实时接收系统
 
-更新时间：2026-07-13（Asia/Shanghai）
+更新时间：2026-07-16（Asia/Shanghai）
 
 本文记录当前已经实现、部署和测试过的状态；不包含后续研发计划。新会话应先读
 本文与 `README.md`，再改动工程。
@@ -29,11 +29,15 @@
 ```
 
 Git 分支为 `cmex`，远端为 `origin`（`git@github.com:StevenLeePP/SwitchingAntenna.git`）。
-最近提交为：
+Phase 2/3 冻结点分别为：
 
 ```text
-6fcdf2a feat: add staged startup discard and continuous constellation
+phase2-freeze-2026-07-15
+phase3-freeze-2026-07-16
 ```
+
+Phase 3 tag 包含 R16--R22 的平台、端口选择、全栈净增益、理论、能效、复现命令和审议
+记录；实时 OTA 数据面仍以本文档后续章节为准，Phase 3 离线算法没有移入 direct MEX。
 
 远端工程目录（TX/RX 相同）：
 

@@ -1,6 +1,6 @@
 # 专家审议说明：4T4R Type-A 与单链开关仿真研究主干
 
-更新时间：2026-07-15（Asia/Shanghai）
+更新时间：2026-07-16（Asia/Shanghai）
 工程：`/root/lap/SwitchingAntenna/c_demo`，分支：`cmex`
 
 ## 1. 结论先行与审议边界
@@ -1497,3 +1497,687 @@ Phase 2 以该缩放主张正式关闭。`phase2-freeze-2026-07-15` 表示实验
 冻结，并不表示所有预注册门通过；tag 说明必须显式包含 EVM² ratio no-go 和高 SNR
 单簇边界。若以后需要 5--25 dB 的多 SNR 定量主张，应使用外部衰减器或 TX 功率步进
 重采；这是论文增强项，不阻塞 Phase 2 关闭，也不回改本轮冻结结果。
+
+## 35. README 独立工程首页重构（2026-07-15）
+
+本轮不修改算法、实验数据或冻结结论，只重构工程入口文档并补齐仓库内可复现资产：
+
+- `README.md` 改为不依赖交接文档也能理解的独立首页，增加工程目标、物理边界、实时/
+  离线双路径架构、快速入口和文档索引；
+- Phase 0、Phase 1、Phase 2 改为同级章节，按“理想回归 → 静态损伤分类 → 时变损伤/
+  恢复/集成边界”组织，不再把 Phase 0 错列为 Phase 1 子目录；
+- 明确实时 MEX 已下放 DMA/ring、栅格、Type-1 DM-RS、4×4 RZF、QPSK 判决和 BER/EVM
+  累积；Phase 2 的 ICI-DF、DDCE、CPE、统计扫描仍属于离线 MATLAB 研究路径；
+- 使用 `tools/render_architecture.py` 生成正式架构图，并把 Phase 2 freeze 对应的七张结果图
+  收入 `docs/images/` 后在 README 原位引用，避免“正文提图但仓库不可见”；
+- 删除过时的单轮 60 s OTA 流水账和旧逐帧精度段，保留仍有意义的实时能力边界；Phase 1/
+  Phase 2 的关键证据、门禁与 no-go 均按冻结口径重新归纳，R15 仍严格写为 EVM²
+  ratio=2.112 no-go、高 SNR 单簇趋势锚点。
+
+因此本轮结论仅是文档可读性、可追溯性与复现入口得到修复；不得据此声称新增实验结果
+或 Phase 2 算法已经进入实时 MEX。
+
+## 36. R16 前置：Phase 3 Part A 平台与退化回归（2026-07-15）
+
+### 36.1 冻结实现边界
+
+本轮严格按 `PHASE3_PLAN.md §7` 只实现 Part A，不启动端口选择或性能扫描。新增平台把
+M 根物理端口在每个 raw 样点先坍缩为唯一标量
+
+\[
+y[k]=\sum_m S[m,q(k)]r_m[k],
+\]
+
+然后才按 N 个码相去交织。`type1_phase3_single_chain` 只返回 `Nsample×1` stitched 流
+和由该标量流重排得到的 N 条 virtual 流，不暴露逐端口数字输出。
+
+`type1_phase3_make_schedule/type1_phase3_validate_schedule` 使用规范张量
+`A[m,n,q]=S[m,n]1[q=n]`：S 管 `Htilde=S^T H`，A 管 N 相码周期、链覆盖、每端口
+占空比、循环切换次数、相位归属和可选 settling-interval 硬门。同一端口可在不同码相
+进入不同虚拟链；同一码相给多个链标签的扇出会以 `type1:Phase3IllegalFanout` 拒绝。
+多个天线在同一码相汇入唯一标量求和节点是冻结信号模型允许的 BABF，不属于扇出。
+
+M 端口 TDL-A 由 `type1_phase3_make_tdl_a_channel` 单独实现，避免改变 Phase 2 冻结路径。
+默认端口为半波长 ULA，RX 空间协方差固定由
+`R(m1,m2)=J0(2*pi*|d_m1-d_m2|/lambda)` 生成；相关性不能脱离端口位置单独调参。
+
+### 36.2 四门结果与复现审计
+
+RX 服务器 MATLAB R2024a、seed `20260716` 的正式目录为：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_part_a_20260715_201908/
+```
+
+`phase3_part_a_r16.mat` SHA-256 为
+`0e0281db0ac7d941627107db618fec283128aa4a130d478bcfc5cb2d666991fb`。两次独立输出的
+`result.report` 满足 `isequal=1`。结果如下：
+
+| 预注册回归 | 结果 |
+|---|---|
+| M=N=4、S=I 退化 | 旧/新 stitched 逐位一致=1，virtual 逐位一致=1，数字化输出列数=1 |
+| 理想开关与等效信道 | M=8 的 `v=rS` 相对误差=0，`Htilde=S^T H` 相对误差=`1.6872e-16` |
+| 占空比守恒 | `sum_q A=S`、逐端口 duty、总 assignment 均精确；`Dmax=1` 超限按预期拒绝 |
+| 非法并接/扇出拒绝 | 同一端口/同一码相写入两个链标签，以 `type1:Phase3IllegalFanout` 拒绝 |
+
+M=8 端口位置为 `[0,0.5,...,3.5] lambda`，J0 相关矩阵最小特征值 `0.641113`，TDL
+输出维度 `256×8`、抽头张量 `8×4×23` 均通过。为确认新增层未污染冻结基础设施，远端
+同时重跑 `type1_validate_switch_impairments` 与 `type1_validate_channel_models`：两者通过；
+后者该 seed 的四层 TDL BER 为 `[6.28e-6,5.72e-4,3.39e-4,2.70e-4]`，只作兼容回归，
+不是 Phase 3 性能结果。
+
+### 36.3 当前可得结论
+
+R16 前置资产证明 A/S 映射、严格单标量链路、M 端口几何信道及四项拒绝门可复现，且
+`M=N,S=I` 没有改写现有系统。它**不证明 M>N 的波束成形、SINR、速率或净增益为正**；
+在专家完成 R16 裁决前不进入 Part B 扫描，也不改变 Phase 3 三个 go/no-go 门。
+
+## 37. 面向通信同行的独立系统说明（2026-07-15）
+
+新增 `SYSTEM_EXPLAINER.md`，本轮不修改模型、算法、运行结果或 R16 资产。该文档不采用
+Phase 1/2 编年结构，而按“单链虚拟化原理 → 帧接收流程 → 用户/信道/开关/本振/同步/
+实时计算非理想性 → 补偿效果 → OTA 边界 → M>N 后续工作”组织。
+
+文档对 reference、虚拟 RF chain、PSS/PBCH/SSB、CFO、DM-RS、RZF、TDL-A、开关
+瞬态、OU/AR(1)、采样边界位移、RX-LO/RX-PLL、CPE、ICI-DF、direct RX、MEX、
+pending/dropNew、BABF/FAS/DBF/HBF 等术语在首次出现时解释，并提供集中术语表。
+
+数字沿用冻结口径：逐用户 CFO 补偿、相关建立抖动、flat 与 TDL 的 ICI-DF 增益差异、
+PSS 假峰平台、R15 EVM² 2.112 ratio no-go 和 Phase 3 Part A 仅完成代数地基。特别注明
+当前 TDL 多普勒未启用、自定义上行 SSB 只是同步脚手架、当前 OTA 仍为四路 IQ 驱动的
+数字开关模拟，避免把计划功能或算法验证写成物理原型能力。
+
+为验证新增复现索引，RX 服务器在无 `sudo`、不访问板卡条件下 fresh 运行
+`type1_run_offline_multiuser`，输出目录
+`/home/bupt/type1_offline_captures/type1_offline_multiuser_20260715_231828/`。未补偿 BER
+`[0,0.0137,0.2731,0.2587]`、补偿后 `[0,5.87e-5,9.49e-4,0]` 与冻结引用一致；三帧均
+触发接近 ±1 kHz 混叠边界的告警，进一步确认说明文档没有隐去估计器适用范围。
+
+## 38. R17 预注册：M=8 穷举标尺与门 1（2026-07-15）
+
+R16 通过后放行 Part B，但本轮只执行 `PHASE3_PLAN.md §7.5` 门 1，不实现贪婪、松弛或
+NetGain。为使“穷举”具有可验证含义，冻结可行集为 M=8、N=4、每条虚拟链恰好 2 根
+端口、每根物理端口只属于 1 条链（`Dmax=1`）。四条链有标签、链内端口无顺序，因此
+精确候选数为 `8!/(2!^4)=2520`；本轮结论不得外推到 `Dmax>1` 的码叠加空间。
+
+每个候选在 51 个固定 RB 代表子载波上优化
+`min_u mean_k SINR_dB(k,u)`，选出的同一个宽带 S 再在全部 612 个占用子载波上评价。
+接收模型为 `v=S^T Hx+S^T n`，每端口噪声独立且方差相同，所以必须使用
+`Rn=sigma2*S^T S` 的噪声感知线性 MMSE；禁止把两端口求和后的噪声仍按单端口计算。
+M=4 基线为同一 M=8 TDL realization 的前四端口和 `S=[I4;0]`，因此信道、SNR 和 seed
+严格配对。SNR 固定 20 dB，TDL seed 固定为 `20261701:20261720`；Gate 1 不加入开关
+损伤、扫描开销或 acquisition，它们属于门 3。
+
+paper 门在看结果前冻结为同时满足：
+
+1. 20 个配对 seed 中至少 16 个（80%）的全 612-tone 增益为正；
+2. 配对增益中位数严格大于 0 dB；
+3. 把零/负增益保守视为失败的单侧精确符号检验 `p<0.05`。
+
+同时报告固定相邻端口配对 `[1,2]/[3,4]/[5,6]/[7,8]`，用于区分“增加四根端口”与
+“端口选择”本身；该固定臂不参与门。smoke 只准调试代码，不能改判 paper 门。
+
+### 38.1 实现与独立代数检查
+
+`type1_phase3_enumerate_pair_partitions` 生成 2520 个无重复 S，每列和恒为 2、每行和恒为
+1；所有候选均通过 Part A 调度验证且单链输出宽度保持 1。`type1_phase3_wideband_metrics`
+使用线性 MMSE 误差协方差恒等式 `SINR_u=1/E_uu-1`，并显式带入
+`Rn=sigma2*S^T S`。在 3 个候选×7 个复信道音调上，与逐用户直接构造 MMSE 合并器的
+SINR 相对误差为 `2.7748e-14`。候选数、唯一性、结构、指标等价和最大值审计全部通过，
+五个新增 MATLAB 文件 `checkcode=0`。
+
+### 38.2 paper 结果与 Gate 1 裁决
+
+正式目录为：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r17_paper_20260716_000304/
+```
+
+正式 MAT SHA-256 为
+`92b4ac29800518a2cd16f684c7ac9c70c74e27c1ad7d5d49a4a5ca250271322d`，PNG SHA-256
+为 `c8e64c3b1c16130cc9b10219736208c8aa3cc3feda6a9c0a7285d38791cf523e`。另一次 fresh
+20-seed 全量重跑的 `preRegistration/validation/summary/perSeed` 四项 `isequal` 均为 1。
+
+全 612-tone 的配对结果为：
+
+| 指标 | 结果 |
+|---|---:|
+| M=8 穷举优于 M=4 | 19/20 seed |
+| min-user SINR 配对增益中位数 | **+2.42018 dB** |
+| 增益范围 | `[-0.04973,+4.37325] dB` |
+| 配对中位 bootstrap 95% 区间 | `[+1.86328,+3.61266] dB` |
+| 单侧精确符号检验 | `p=2.0027e-5` |
+| min-user rate 增益 | 20/20 为正，中位 `+0.70238 bit/s/Hz` |
+| Gate 1 | **通过** |
+
+20-seed 目标中位数为：M=4 identity `9.4174 dB`、M=8 固定相邻配对 `8.0961 dB`、
+M=8 穷举 `11.7864 dB`。固定配对相对 M=4 仅 6/20 为正，中位 `-1.0298 dB`，所以
+不能把结果解释为“多四根端口自然产生阵列增益”；正结果依赖端口分组选择。
+
+唯一负例 seed `20261718` 在 51-tone 搜索目标上已经为 `-0.04137 dB`，全 612-tone 为
+`-0.04973 dB`。因此负例不是代表音调抽样引起的符号翻转，而是冻结约束“每链必须 2 根、
+全部 8 端口必须使用”在该 realization 确实不如四端口基线。它直接支持 Gate 2/3 中允许
+关停端口或优化每链端口数，禁止声称 M=8 逐 realization 必然占优。
+
+### 38.3 本轮结论边界
+
+R17 只关闭 `Dmax=1`、每链 2 端口的理想开关 Gate 1，证明在几何相关 TDL-A 上存在
+可重复的受约束端口选择增益。它没有覆盖一端口多码相的 `Dmax>1`、开关建立/泄漏、
+acquisition、端口扫描开销、贪婪/松弛算法或 NetGain；上述项目仍分别属于 Gate 2/3。
+
+## 39. R18：扩大可行集、在线算法与码叠加 Gate 2（2026-07-16）
+
+### 39.1 预注册口径与实现
+
+本轮严格使用 R17 的 `20261701:20261720`、20 dB、几何相关 TDL-A 和同一噪声感知
+MMSE 指标。Gate 目标冻结在 51 个 RB 代表频点；选出的同一个 S 另在全部 612 个占用
+子载波上做迁移审计，612 点结果不得反过来改写 Gate。
+
+- F1 把每根端口编码为 `{off,c1,c2,c3,c4}`，要求四链均覆盖且 `Dmax=1`，按容斥精确
+  生成 **166824** 个唯一调度；R17 的 2520 个满载配对全部属于 F1；
+- F2 允许每天线进入至多两条不同码相的虚拟链，只运行算法，不声称穷举最优；
+- 贪婪先在全部 `8P4=1680` 个满秩一端口覆盖初始化中选最好者，再只接受严格提高
+  min-user SINR 的边；因此轨迹逐步单调且允许端口保持关闭；
+- 松弛臂用 `fmincon` 对 `[0,1]^(8x4)` 的 soft-min 代理做局部连续优化，再投影为满足
+  coverage、Dmax 和 `rcond(S^T S)>1e-12` 的二值调度并做坐标精化。该目标非凸，故这里
+  明确标为**局部松弛诊断，不是经证明的全局上界**；禁止沿用“松弛必给上界”的表述；
+- 固定相邻、R17 穷优、随机可行和 FAS 单端口 Max-SINR 均进入同 seed 基线。
+
+正式运行前发现并修复一个量化器缺陷：第 7 个 paper seed 的 flat/F2 连续量化曾产生
+两列完全相同的 S，使 `S^T S` 奇异。该未完成运行整体作废；修复是在量化硬约束中加入
+噪声协方差满秩门，不调整任何性能门槛或 seed。修复后从 seed 1 全量重跑。
+
+代数回归结果：F1 基数 166824、R17 超集成立、批量页 MMSE 与逐候选标量实现最大绝对
+误差 `5.95e-14 dB`、F1/F2 贪婪轨迹均不下降、`M=N,S=I` 退化误差为 0。批量实现只利用
+F1 下 `S^T S` 为对角阵进行白化，没有省略“多天线求和会同时累加噪声”这一守卫。
+
+### 39.2 paper 结果与 Gate 2
+
+正式目录：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r18_paper_20260716_003616/
+phase3_r18_gate2.mat SHA-256:
+14df40eb039a7b440633c708230a9c983b75d75b2922efb070812423704ccb18
+```
+
+| 指标（51-tone Gate 口径） | 结果 |
+|---|---:|
+| F1 穷优相对 M4 增益 | 中位 `+3.72221 dB`，范围 `[+2.25563,+5.34847] dB`，20/20 非负 |
+| F1 贪婪胜 M4 | 20/20 |
+| F1 贪婪保留穷优增益 | **中位 92.4%**（门槛 80%） |
+| F1 局部松弛量化保留率 | 中位 85.6% |
+| F2 贪婪相对 F1 穷优 | **中位 −0.203 dB，5/20 为正** |
+| F2 松弛量化相对 F1 穷优 | 中位 `+0.053 dB，10/20 为正` |
+| flat 下 F2 贪婪相对 F1 | 中位 `0 dB，7/20` 严格为正 |
+| Gate 2 | **通过** |
+
+全 612-tone 迁移审计同样给出 F1 穷优 20/20 非负、中位 `+3.69333 dB`；F1 贪婪
+20/20 非负、中位 `+3.23837 dB`。因此结果不是 51 个代表频点上的符号翻转。基线中位
+增益为：固定相邻 `−1.03255 dB`、R17 强制满载穷优 `+2.42153 dB`、FAS 单端口
+`+0.37834 dB`、随机 `−0.97292 dB`。
+
+**裁决边界**：Gate 2 只支持“F1 的关停自由度修复 R17 反例，在线贪婪可稳定保留大部
+分穷优增益”。它不支持“Dmax=2 码叠加有稳定额外增益”的头条：F2 贪婪在 TDL 和 flat
+均未形成正中位增量；松弛量化的 `+0.053 dB` 很小、仅 10/20 为正，且不是全局上界。
+
+另一次完整 R18 运行与正式资产的 `perSeed/preRegistration/validation` 三项均
+`isequal=1`，证明上述逐 seed 数据不依赖运行次序。
+
+## 40. R19：M=8 带损伤单链、同步/扫描与 Gate 3（2026-07-16）
+
+### 40.1 冻结模型与 NetGain 定义
+
+R19 只评价 R18 已经定义并成对选出的 M=8 调度，不借本轮结果临时扩展到未经 R18 标定
+的 M=12/16。每个 seed 用同一 M=8 TDL 抽取和同一物理端口噪声生成两帧全带宽波形，
+再在 122.88 MS/s 标量链中比较 M4、F1 穷优、F1 贪婪和 F2 贪婪。任一码相只有
+`y[n]=sum_m c_m[n]r_m[n]` 一列数字化输出。
+
+损伤点在看结果前冻结为：25 dB 隔离、20 ns 10--90% 建立、`fast=0.2`、OU 相关时间
+1 us；泄漏相位沿用 Phase 2 的零相位相干约定，不加入 CFO、LO 或新的用户损伤。一个
+外部生成的相同 `beta[n]` 序列被四个调度共用，杜绝换调度同时换抖动 realization。
+M 端口代数回归得到：M8 中仅开前四端口时与 M4 identity 逐样点误差 0，两端口同相求和
+误差 0，标量输出列数 1，OU lag-1 `0.994506` 与理论一致。
+
+专家给出的 `selection gain - impairment - sync/scan` 是概念分解，不能直接把概率、dB
+和时间占空比相减。本轮主指标因此预注册为无量纲有效吞吐量
+
+```text
+G_eff = P_acq * (1 - scanFraction) * (1 - decodedBER)
+```
+
+M4 不需要额外端口扫描；M8 每次更新需多一个 10 ms 扫描帧。主口径冻结为每 100 ms
+更新一次（10% 扫描），另报 1 s 更新（1%）敏感性。EVM 质量
+`Q=-20log10(EVM_RMS)` 只用于把选择、差分损伤、同步与扫描分别记账，不可覆盖主门。
+
+### 40.2 paper 结果、逐位复现与 Gate 3
+
+正式资产采用第二次 fresh 全量运行：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r19_paper_20260716_004011/
+phase3_r19_gate3.mat SHA-256:
+5685b0cae5027f0ef6da90eba24e8b4a546586a510bba5310ad04b708e273df7
+```
+
+| 指标 | M4 | F1 穷优 | F1 贪婪 | F2 贪婪 |
+|---|---:|---:|---:|---:|
+| 理想开关 acquisition | 19/20 | 20/20 | 20/20 | 20/20 |
+| 损伤后 acquisition | **20/20** | **19/20** | **19/20** | **19/20** |
+| 损伤后成功帧平均 decoded BER | 3.20% | 1.03% | 1.15% | 1.20% |
+| 理想选择 EVM-quality 增益 | 0 | +4.278 dB | +3.616 dB | +3.616 dB |
+| 相对 M4 的差分损伤成本 | 0 | 1.457 dB | 1.296 dB | 1.467 dB |
+| 含 acquisition+100 ms 扫描的净 EVM-quality | 0 | +2.141 dB | +1.640 dB | +1.468 dB |
+| 100 ms 主口径 `G_eff` | 0.9680 | 0.8462 | 0.8452 | 0.8447 |
+| 主口径相对 M4 | 0 | **−0.1218** | **−0.1229** | **−0.1233** |
+| 1 s 敏感性相对 M4 | 0 | −0.0372 | −0.0384 | −0.0389 |
+
+损伤后唯一的 M8 acquisition 失败是 seed `20261701`，三个由同一 min-SINR 目标导出的
+M8 臂均失败；该 seed 的错误帧 BER 约 0.5，但主统计把它作为 acquisition outage 而不是
+成功帧 BER。其余成功 realization 上，选择后的 BER/EVM 明显优于 M4，说明头room 未在
+模拟损伤中消失；真正吞掉净吞吐量的是未进入目标函数的同步失效，再叠加扫描占空比。
+
+本轮最初把 Gate 3 单独写成 no-go，专家 R18/R19 合并审议指出这会遗漏 §7.4 的原始
+SINR/dB 定义，现按审议**保留修正痕迹并改为双重裁决**：
+
+- 按 §7.4 的 `selection - differential impairment - sync - scan`，F1 穷优仍有
+  `+2.141 dB`，所以 **SINR-quality Gate 3 通过**；
+- 按后来增加、且更严格的固定 QPSK 有效吞吐量口径，100 ms 和 1 s 更新均低于 M4，
+  所以 **fixed-QPSK goodput no-go**。
+
+两者不能互相覆盖。前者证明器件/波束成形增益在损伤后真实存活，后者证明固定 QPSK
+已接近饱和，其 BER 收益只有约 2.2%，不足以支付 5% acquisition 差异和 10% 扫描。
+因此科学结论是：**M=8 选择本身没有失效，但端到端兑现依赖 AMC 工作点、同步统计和
+扫描摊薄。** 本轮没有评估 M=12/16，因而不得把 fixed-QPSK no-go 外推成“所有 M 均负”。
+
+两次独立 20-seed 全波形运行的 `ideal/impaired/betaMeta/summary/validation` 五项均
+`isequal=1`。第一次目录为 `.../type1_phase3_r19_paper_20260716_003640/`；fresh 复现没有
+覆盖旧资产或挑选更有利运行。
+
+最终部署版本重新运行 R16/R17/R18/R19 四组代数回归，结果均通过；远端全部 15 个
+`type1_phase3_*.m` 的 MATLAB Code Analyzer findings 为 0，两个 README 结果图 SHA-256
+分别为 `2adda671...861cf523e`（R18）与 `cd8bac0e...fe8c1ef4`（R19）。本轮未执行 git
+commit/push，保留给用户验收。
+
+## 41. R20：AMC、同步感知选择、扫描摊薄与 M=12/16（2026-07-16）
+
+### 41.1 预注册设计与实现边界
+
+R20 同时落实四项重测要求，但不把不同证据混成一个结论。每个 seed 先生成一份
+`M=16`、几何相关 TDL-A 信道，再用前 4/8/12/16 个端口形成严格嵌套的成对比较；50 个
+seed (`20262201:20262250`) 全部执行一帧/四帧 PSS acquisition，前 20 个再执行两帧完整
+PSS/PBCH/DM-RS/RZF/QPSK/BER/EVM。所有 M 仍冻结 `Dmax=1`，因为 R18 已经证明
+`Dmax=2` 码叠加没有稳定增量；此处不借新一轮重新打开该自由度。
+
+五个预注册臂为 `M4 / M8Data / M8Aware / M12Aware / M16Aware`。同步感知选择器以已知
+TDL 信道计算 PSS MRC-SNR 代理，强制代理值不低于同 realization 的 M4 identity，再在
+该约束内贪婪提高数据 RE 的 min-user MMSE-SINR。它是**oracle-channel 研究选择器**，
+不是已经完成的在线信道扫描估计器；代理门通过也不等价于实际时域 PSS 必然成功。
+
+AMC 使用看结果前冻结的 CQI-style 链路抽象：把完整接收机测得的
+`Q=-20log10(EVM_RMS)` 映射到 15 个固定门限和频谱效率，并乘冻结的目标块成功率 0.9。
+同时把全部门限整体平移 `-2/0/+2 dB` 做敏感性审计。这不是实际 16/64QAM 波形解码，
+也不是 3GPP MCS 一致性声明；它只回答“R19 存活的 SINR/EVM 头room，在非饱和工作点
+能否换成更高频谱效率”。扫描开销为每次更新 M4/M8/M12/M16 分别占用 0/1/2/3 个
+10 ms 帧，更新周期预注册为 0.05--10 s，主门取 1 s。
+
+新增 `type1_phase3_iir_mex.c` 只用于把 M=16、五帧、50-seed 的因果建立 IIR 加速到可
+执行规模；源码实现 complex single/double 两条分支，本轮实际使用并回归的 single 输出
+与 MATLAB 标量递推的最大绝对误差为 `2.55e-7`。其余回归包括 PSS 批/标量代理 0 dB
+误差、streamed target 与显式 raw-M 构造的最大绝对误差 `4.50e-7`、AMC 单调性和同步
+约束，全部通过。
+
+### 41.2 作废运行与噪声口径修正
+
+第一次完整目录 `.../type1_phase3_r20_paper_20260716_011035/` **整体作废，不参与任何
+门或结论**。运行结束后的数量级审计发现，代码错误地把含静默 slot 的时域波形均方
+功率噪声方差同时传给频域 MMSE 选择指标，使选择目标虚高到约 26--35 dB。修正后严格
+分离两种物理口径：
+
+```text
+nv_waveform = mean(|r[n]|^2) / SNR       （只用于时域 AWGN）
+nv_metric   = mean(sum_m |H_m,u[k]|^2) / SNR （只用于频域 MMSE）
+```
+
+修正 smoke 的选择目标回到 M4/M8/M12/M16 约 `8.69/12.71/15.02/15.22 dB`，与 R17--R19
+相同量级。修正发生在查看正式 Gate 结论之前，seed、损伤、门限和判据均未改变；随后从
+seed 1 重新跑完整 paper，禁止从作废目录摘取较好数字。
+
+### 41.3 正式结果
+
+正式目录和哈希为：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r20_paper_20260716_012732/
+phase3_r20.mat SHA-256:
+eb15cc84b05ac2880ac0f789f36faec45a2e86decf98ccc7e9fe010395c3bb13
+phase3_r20.png SHA-256:
+5db4ec00af7abe1cf811003a1bd6a2e1388347ef71347fabfab7ea42b243e29c
+```
+
+| 指标 | M4 | M8-data | M8-aware | M12-aware | M16-aware |
+|---|---:|---:|---:|---:|---:|
+| 1 帧 PSS acquisition / 50 | 46 | 47 | 48 | 48 | 47 |
+| 4 帧 PSS acquisition / 50 | 46 | 47 | 48 | 48 | 47 |
+| 完整解码有效 / 前 20 | 20 | 18 | 18 | 20 | 20 |
+| EVM-quality 中位数 | 5.441 | 8.673 | 8.306 | 9.577 | 9.989 dB |
+| 成功帧平均 decoded BER | 3.844% | 1.509% | 1.541% | 0.830% | 0.608% |
+| 理想选择 min-SINR 中位数 | 8.539 | 12.565 | 12.355 | 14.385 | 15.711 dB |
+| 1 s nominal AMC 增益 | 0 | +0.439 | +0.449 | **+0.614** | **+0.710 bit/s/Hz** |
+| 1 s fixed-QPSK 增益 | 0 | +0.064 | +0.102 | +0.097 | +0.043 |
+
+主门冻结为“1 s 更新、nominal AMC 表下 M12 或 M16 相对 M4 增益为正”，因此
+**R20 Gate 3 重测通过**。门限整体平移 `-2/0/+2 dB` 时，M12/M16 的 1 s 增益仍分别约
+`(+0.715,+0.787)/(+0.614,+0.710)/(+0.546,+0.621) bit/s/Hz`，正号不依赖单一门限对齐。
+
+acquisition 比例的 Wilson 95% 区间分别为：46/50 `[0.812,0.968]`、47/50
+`[0.838,0.979]`、48/50 `[0.865,0.989]`，高度重叠。M8-data/M8-aware/M12/M16 相对
+M4 的成对 rescue/loss 分别为 `3/2、3/1、3/1、4/3`，也没有统计显著差异；因此 R20
+不能把 AMC 主门通过改写成同步概率已经提高。
+
+扫描曲线给出清晰的摊薄边界：50 ms 更新时 M12/M16 分别为 `-0.012/-0.295`，100 ms
+已经转为 `+0.318/+0.234 bit/s/Hz`；随后随周期拉长单调趋近无扫描开销极限。故“更多
+端口总能提高净吞吐”仍是错误的，更新过快时 2--3 个扫描帧会反噬；但 R19 单一
+100 ms/固定 QPSK no-go 也不能外推为所有工作点和所有 M 失败。
+
+### 41.4 同步子结论与最终边界
+
+同步感知 M8 相对数据 M8 的四帧 acquisition 为 1 次 rescue、0 次 loss，McNemar
+`p=1`；两者有 33/50 调度完全相同。四帧非相干累积与一帧计数逐臂完全相同。由此必须
+拒绝两个过强主张：“同步感知选择已经统计显著提高 acquisition”和“高 SNR realization
+假峰可由重复同一帧直接消除”。代理约束能防止明显牺牲 PSS 能量，但当前 50-seed 只给
+出方向性、非显著的 `47 -> 48`，不能升为默认在线选择器。
+
+R20 的正结果来自三个同时成立的条件：TDL 下 M 扩展确实提高数据质量；AMC 提供未饱和
+工作点；扫描更新周期足以摊薄开销。它不证明真实在线扫描已经获得 oracle 调度，也不
+证明物理单 RF 开关板已经实现 M=16。可发表的结论是：**R19 的“器件级 SINR 正、固定
+QPSK goodput 负”分裂不是选择失效；在冻结 AMC 抽象和合理更新周期下，M=12/16 可把
+存活的质量增益兑现成正净吞吐，但 acquisition 代理仍需在线化和更强的假峰特征。**
+
+第二次独立 50-seed 全量运行保存在
+`.../type1_phase3_r20_paper_20260716_014240/`；两次运行的
+`preRegistration/validation/selection/data/acq1/acq4/acqDetail/summary` 八项
+`isequaln` 全为 1。fresh MAT SHA-256 为
+`48570643bc037d570dfe4315e5a408ee52f5a7f73ae2e91e90a8eace1ebdf9da`。最终部署版本重跑
+R16--R20 五组代数回归全部通过，7 个 R20 MATLAB 文件的 Code Analyzer findings 为
+0，`git diff --check` 通过。本轮未执行 git commit/push。
+
+## 42. R21 Part D：闭式 SINR 与可达速率理论（2026-07-16，预注册）
+
+R21 先做 Part D，不先做能效。原因不是理论预期更容易给正结果，而是 Part D 可以直接
+对 R20 已冻结的 50-seed 数值资产做逐位等价门；Part C 的 GreenMO/DBF/HBF 功耗仍需
+冻结器件参数和共同系统边界，若现在自行填写功耗数字，结论会由假设而非系统决定。
+
+理论冻结为每个子载波
+
+```text
+G = S^T H,                 Rn = sigma^2 S^T S
+Rz = Rn + E E^H
+C  = (I + G^H Rz^(-1) G)^(-1)
+SINR_u = 1/C_uu - 1
+R_MMSE = sum_u log2(1+SINR_u)
+C_logdet = log2 det(I + G^H Rz^(-1) G)
+```
+
+其中 `Ex` 作为与数据不相关的高斯自干扰处理是**保守可达率模型**，不是声称真实开关
+残差与 `x` 独立。令 `F=Rn^(-1/2)G`、`D=Rn^(-1/2)E`，预注册的逐音调下界为
+
+```text
+min_u SINR_u >= sigma_min(F)^2 / (1 + ||D||_2^2).
+```
+
+空间相关不引入自由 `rho`：继续使用几何绑定的
+`R_ij=J0(2*pi*|p_i-p_j|/lambda)`。对任一二值链向量 `s`，期望噪声归一化阵列增益为
+`s^T R s/(s^T s)`，并受 `lambda_min(R)` 与 `lambda_max(R)` 夹逼。
+
+R21 主门只要求闭式公式在同一 R20 seed/S/TDL/noise 上复现冻结的 51-tone 选择目标，
+最大绝对误差 `<1e-9 dB`；MMSE 率不得超过 log-det，残余谱范数下界不得超过精确结果。
+不预注册“速率必须随 M 单调”或“相关性增益必须为正”，避免用结果反向选择理论口径。
+
+### 42.1 实现、回归与一次无效 smoke
+
+新增 `type1_phase3_theory_metrics.m`、`type1_phase3_correlation_gain.m`、
+`type1_validate_phase3_theory.m` 和 `type1_run_phase3_r21_theory.m`。第一次数值 smoke 在
+生成 TDL taps 前即失败：为避免时域卷积开销传入了 `zeros(1,4)`，MATLAB `fft` 因第一维
+为单例而沿第二维执行，导致数组尺寸不兼容。修复仅把占位波形改为 `zeros(2,4)`，确保
+FFT 沿时间维；该输入不参与随机信道生成，也不改变 RandStream 消耗。失败 smoke 没有
+形成 MAT/PNG，更没有进入结果。
+
+独立回归结果为：闭式 SINR 与既有 MMSE 数值引擎相对误差 `9.91e-16`；用显式
+`W=G^H(GG^H+Rz)^(-1)` 逐流拆出 desired/interference/noise 后，相对误差
+`3.90e-15`；随机残余 E 下精确 eigen-SINR 与谱范数保守界的最小余量 `0.00229`，
+log-det 相对逐流 MMSE sum-rate 的最小余量 `2.35 bit/s/Hz`。J0 二次型有限和与 50000
+次相关 Rayleigh Monte Carlo 的最大相对误差 `0.00597`。四个新增 MATLAB 文件
+Code Analyzer findings 均为 0。
+
+### 42.2 50-seed paper 结果
+
+正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r21_paper_20260716_090554/
+phase3_r21_theory.mat SHA-256:
+12cd11d9c356e49fb25db2fec7eb8b2d7b74b33a068a5b2c7bbe202f93e701ba
+phase3_r21_theory.png SHA-256:
+e5b1867b469a8b704c2a2e3b515cb569facb8f459d2b6e7c3a59001691895e64
+```
+
+闭式理论对冻结 R20 51-tone objective 的最大绝对复现误差为 **`8.88e-15 dB`**，远低于
+`1e-9 dB` 主门，Part D 代数门通过。
+
+| 50-seed 中位数 | M4 | M8-aware | M12-aware | M16-aware |
+|---|---:|---:|---:|---:|
+| 理想信道 min-user LMMSE rate | 3.093 | 4.226 | 4.847 | 5.263 bit/s/Hz |
+| 逐流 MMSE sum-rate | 14.785 | 18.072 | 20.402 | 21.634 bit/s/Hz |
+| joint log-det | 20.592 | 22.497 | 24.072 | 24.655 bit/s/Hz |
+| log-det − MMSE sum-rate | 5.743 | 4.261 | 3.485 | 3.054 bit/s/Hz |
+| 相对 M4 的 min-rate 胜出 seed | — | 49/50 | 49/50 | 50/50 |
+
+这里的“理想信道”指 R20 同 seed、同 S、同 TDL 和同热噪声，但没有把 25 dB/20 ns/OU
+全波形残差反推成 E；因此表格是**选择头room的理论闭合**，不能替代 R20 的实际 AMC
+goodput。log-det 是允许联合最优高斯检测的互信息上界，不能当成当前逐流 RZF/MMSE
+接收机已达到的吞吐量。两者间隙随 M 缩小，说明端口选择同时改善了逐流线性检测距
+联合检测上界的差距，但仍有 3 bit/s/Hz 量级余量。
+
+### 42.3 残余损伤与几何边界
+
+对白化残余谱范数 `epsilon=||Rn^(-1/2)E||_2`，保守 min-user rate 中位数从
+`epsilon=0` 到 `epsilon=2` 分别由
+
+```text
+M4 : 1.831 -> 0.653 bit/s/Hz
+M8 : 2.867 -> 1.263 bit/s/Hz
+M12: 3.580 -> 1.702 bit/s/Hz
+M16: 3.955 -> 1.992 bit/s/Hz
+```
+
+下降。该界在全部点不超过精确 SINR。目标 10 dB 的中位规范化 epsilon 预算为
+`[0,0,0.400,0.724]`；它说明更大 M 在该保守谱界下有更高残余容限，但 epsilon 是
+**白化后的无量纲矩阵范数**，未映射回隔离度/建立时间前，禁止把 `0.724` 写成器件规格。
+
+几何二次型给出同样重要的非单调边界。对固定 round-robin、Dmax=1、正权相加，在
+M=24 时端口间距 `0.125 lambda` 的期望噪声归一化增益为 `-1.78 dB`，而
+`0.25/0.5/1 lambda` 分别为 `+2.59/+1.99/+1.50 dB`。原因是 J0 相关具有符号振荡，
+过密端口被固定分组后可能负相关相消；“端口越密/孔径越大必然越好”不是定理。
+
+对 R20 自适应选择得到的 S，`s^T R s/(s^T s)` 的跨链平均中位约 0 dB、最差链中位
+约 `[0,-0.331,-0.519,-0.553] dB`。这不否定 R20，因为 S 是观察 H 后选择的，固定 S
+的无条件二阶矩不能代表条件选择增益；它反而表明 R20 收益主要来自 realization-specific
+的端口选择和多用户条件数改善，而不是任意固定端口集合自带相干增益。
+
+第二次完整运行目录为 `.../type1_phase3_r21_paper_20260716_090706/`；两次运行的
+`preRegistration/validation/objectiveDb/minUserRate/sumMmseRate/capacityLogDet/`
+`arrayMeanLinear/arrayMinLinear/lowerRate/epsilonBudget/summary` 共 11 个科学字段
+`isequaln` 全为 1。R21 Part D 因而完成；Phase 3 尚余 Part C 能效和 oracle 在线化收口，
+本轮不打 freeze tag、不执行 git commit/push。
+
+## 43. R22 Part C：能效口径冻结（2026-07-16，预注册）
+
+### 43.1 同一张组件表
+
+本轮采用 GreenMO MobiCom'23 原论文 Table 1/§5(b.ii) 的原型功耗作为标称锚点，而不是
+为本文另选更有利器件。原始来源为 GreenMO 作者页面/论文、MAX2829 和 AD9963 官方
+数据页：
+
+- GreenMO paper: https://wcsng.ucsd.edu/files/greenmo.pdf
+- MAX2829: https://www.analog.com/en/products/max2829.html
+- AD9963: https://www.analog.com/en/products/ad9963.html
+- HBF power discussion: https://arxiv.org/abs/1807.07201
+
+| 项目 | 标称值 | 共同计数方法 | 来源/边界 |
+|---|---:|---|---|
+| 单链 RFIC（含 LNA/mixer/filter/PLL/LO） | 354 mW | 本文/GreenMO 各 1 | GreenMO Table 1 的 MAX2829 单链模式 |
+| 同步 MIMO RFIC | 408 mW/链 | DBF×M，HBF×N | GreenMO：4×408=1632 mW；LO 已含，禁止重复计费 |
+| ADC | 100 mW/10 MS/s | 聚合采样率×10 mW/MS/s | GreenMO 对 AD9963 的线性模型；122.88 MS/s 属外推，不是 AD9963 BOM 保证 |
+| 快速开关 | 1 mW/端口 | 本文/GreenMO×M | GreenMO 40 MHz、25% duty 实测近似 |
+| 有源移相器 | 10 mW/个 | PC-HBF×M，FC-HBF×M×N | GreenMO 引用的有源 phase-shifter 口径 |
+| 基带 FFT/输入处理 | 40.82 mW/数字输入 | 单链/GreenMO/HBF×N，DBF×M | 由下述 30% BB 锚点的一半分配得到，属明确派生假设 |
+| N×N 检测 | N=4 时 163.29 mW | 按 `(N/4)^3` | 同上；复杂度敏感性，不是芯片实测 |
+| 端口扫描 | `E_scan=(P_front+P_BB,scan)T_scan` | 本文/GreenMO/HBF 均计 | `T_scan=10 ms*(ceil(M/N)-1)`；DBF 同时观测 M 路，额外扫描为 0 |
+
+基带绝对锚点来自 GreenMO §6 的 5G 组成中“BB 约 30%”：以其 8天线/4流/40 MHz
+GreenMO 前端 `762 mW` 反解 `P_BB=0.3/0.7*762=326.57 mW`，再按 50/50 分给数字输入
+和 N×N 检测。该分拆没有器件实测唯一性，因此必须另报全部组件 `0.5×/1×/1.5--2×`
+敏感性，禁止把单一标称值写成硬件测量。
+
+两条锚点回归必须精确复现：GreenMO 8天线/4流/10 MHz（不含派生 BB）
+`354+400+8=762 mW`；4链 DBF 为 `4*408+4*100=2032 mW`。
+
+### 43.2 公平比较和扫描能量
+
+固定同一 4 流、51 RB、18.36 MHz 占用带宽、30.72 MS/s 每流、同一 R20 50-seed TDL
+和 20 dB noise realization。比较五类前端：本文 Dmax=1、GreenMO-like many-to-many BABF、
+M路 DBF、N链 partially-connected HBF、N链 fully-connected HBF。GreenMO-like/HBF 是
+同信道模型下的理想算法基线，不声称逐位复现 GreenMO 室内实验。
+
+主 EE 使用同一高斯 LMMSE sum-rate，避免把本文的实测 AMC 与基线的理想 capacity 混在
+同一分子；本文另报 R20 AMC goodput/power 作为实际锚点，但不拿它与理想 DBF/HBF 直接
+排名。扫描期间 RF/ADC/开关继续耗电，BB 运行训练而不传 payload：
+
+```text
+EE = B_occ * R_sum * (T_update-T_scan)
+     / [P_front*T_update + P_BB,data*(T_update-T_scan) + P_BB,scan*T_scan]
+```
+
+因此扫描能量和扫描占空比只计一次，既不免单也不把同一 RF 功耗重复相加。主更新周期
+沿用 R20 的 1 s，同时画 50 ms--10 s 曲线。R22 不预注册“本文必须打赢 DBF/HBF/
+GreenMO”；若正负号随组件敏感性翻转，结论必须写成交叉点而不是选取标称档。
+
+### 43.3 实现与回归
+
+新增统一前端速率、HBF、GreenMO-like 码叠加、功耗表、逐架构能量账本、验证和 R22
+入口共 7 个文件。关键回归全部通过：GreenMO `0.762 W`、4链 DBF `2.032 W` 逐位复现；
+M16/N4/100 ms 的扫描占空比为 30%，scan energy 大于 0，且总能量等于各分量之和；统一
+前端 SINR 与 R21 相对误差为 0。7 个文件 Code Analyzer findings 为 0。
+
+第一次 smoke 后、正式运行前发现 R20 AMC 是每流 MCS efficiency，而 R22 理论量是四流
+sum-rate；直接作为实际锚点会少算 4 倍。正式版本同时保存 per-stream 和 `N×` aggregate
+字段，bits/J 使用四流 aggregate。跨架构理想 sum-rate 比较本来就是统一口径，未受该
+修正影响；功耗参数、seed、Gate 均未改变。
+
+### 43.4 50-seed paper 结果
+
+正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r22_paper_20260716_094916/
+phase3_r22_energy.mat SHA-256:
+165eb3e2b5a17fec12a1a6ddb733826e780127de1706e556aff32c6de556477d
+phase3_r22_energy_efficiency.png SHA-256:
+25474d2ae242cf0e4f283668742147a4b6e7295e881d51ed27e6a1b7b406b84f
+phase3_r22_energy_proportionality.png SHA-256:
+d2a3dd17384a277b577c6ad0c1b2a039dedb2a0f5f3137680ceb5a823d12caff
+```
+
+本文 Dmax=1 理论 sum-rate 对 R21 的最大误差为 0，R22 Gate 通过。1 s 更新、4 流、标称
+组件表下：
+
+| M=16 架构 | 理想 sum-rate | 平均 RX 功耗 | 理想参考 EE |
+|---|---:|---:|---:|
+| 本文 Dmax=1 | 21.634 bit/s/Hz | **1.925 W** | **200.1 Mbit/J** |
+| GreenMO-like many-to-many | 22.294 | **1.925 W** | **206.2 Mbit/J** |
+| DBF（16 数字链） | 30.411 | 12.260 W | 45.5 Mbit/J |
+| PC-HBF（4 RF 链） | 16.603 | 3.347 W | 88.3 Mbit/J |
+| FC-HBF（4 RF 链） | 23.311 | 3.827 W | 108.5 Mbit/J |
+
+本文相对 DBF 的标称 EE 比为 4.39×；在统一 low/nominal/high 功耗敏感性下分别为
+5.22×/4.39×/4.06×，正号不依赖单一档。相对 PC-HBF 为 2.64×/2.27×/2.15×，相对
+FC-HBF 为 2.09×/1.84×/1.85×。这些是**同一理想高斯速率分子下的组件模型结果**，
+不是板卡功率实测，也没有计入 PA、冷却和回传。
+
+GreenMO-like 从已验收 Dmax=1 S 出发，允许一天线加入多码相；M=8/12/16 中位只增加
+2/1.5/3 条 membership。M16 中位 sum-rate 比本文高约 3.05%，但逐 seed 只有 34/50
+更高，且它是局部贪婪、不是 GreenMO co-phase 算法复现。故本轮支持“本文电路能效与
+GreenMO 单链包络相同，而简化 Dmax=1 只损失少量中位理想 rate”，不支持“本文打赢
+GreenMO”或“完整 GreenMO 仅有 3% 增益”。
+
+### 43.5 扫描、实测锚点与能量正比边界
+
+M16 本文在 50 ms 更新时扫描 30 ms，理想参考 EE 只有 `82.5 Mbit/J`；100 ms、1 s、
+10 s 时分别为 `144.4/200.1/205.7 Mbit/J`。因此扫描能量和 payload 损失没有被免除，
+且能效结论仍然依赖更新周期。
+
+把 R20 的每流 AMC goodput 乘 4 后，本文 M4/M8/M12/M16 在 1 s 更新的 full-stack
+锚定 EE 仅为 `38.4/55.5/61.7/65.2 Mbit/J`；M16 约为理想参考 200.1 的三分之一。
+该差距包含 AMC 离散化、acquisition、开关损伤和实际解码质量，证明 200.1 只能作为
+电路/理想链路 headroom。由于 DBF/HBF 没有对应 full-stack 解码，本轮禁止用 65.2 与
+它们的理想 45.5/88.3/108.5 直接排名。
+
+固定 M=16、负载 N=1→4 时，本文平均功耗由 `0.721→1.925 W`，而始终开启全部数字链的
+DBF 仅由 `12.099→12.260 W`；本文扫描能量则由 `0.108→0.058 J/次`，因为低负载虽
+功耗较低，却需要更多扫描帧。这同时验证了能量正比优势和“低负载扫描并不免费”。
+
+第二次完整运行在 `.../type1_phase3_r22_paper_20260716_095041/`；两次运行的
+`preRegistration/validation/rate/greenAddedEdges/breakdown/summary` 六个科学字段
+`isequaln` 全为 1。R22 Part C 由此完成，但 Phase 3 freeze/tag 仍等待专家对组件派生
+假设和理想/full-stack 双口径的最终裁决；本轮不提交 git。
+
+### 43.6 文档和最终远端审计
+
+新增 `PHASE3_ENERGY_MODEL.md`，把五种架构的组件计数、GreenMO/MAX2829/AD9963/HBF
+来源、扫描能量公式、理想/full-stack 双速率口径和不可外推边界放在一个可独立复核的
+文件中；`RUN_COMMANDS.md` 新增 R22 验证、paper 运行、正式 SHA、字段级 fresh 对照和
+错误 smoke 禁用说明；README 新增 R22 两张正式图、关键脚本、资产索引和 `.31` 变更行。
+
+最终在 RX 服务器、无 `sudo` 条件下连续运行 R16--R22 七个验证器，输出依次为 PASSED；
+R22 七个 MATLAB 文件的 `checkcode(...,'-id')` findings 全为 0。本地与服务器七文件
+SHA-256 逐个相同；两张本地 README 图的 SHA 与正式远端资产分别为
+`25474d2a...06b84f` 和 `d2a3dd17...d12caff`。三个新/修改文档的本地 Markdown 链接均
+可解析，`git diff --check` 无输出。一次补充 MAT 读取在 SSH 密钥交换阶段被跳板瞬时
+关闭，未启动 MATLAB、未改变远端状态；随即只读重试成功，六个科学字段仍为
+`[1 1 1 1 1 1]`，并重新打印出本文 M16 `1.9254 W/200.1063 Mbit/J` 和四流全栈
+`65.2141 Mbit/J`。
+
+结论不因文档整理而改变：R22 完成的是统一组件模型下的能效和扫描代价表征，不是实物
+功耗测量；R20 选择器仍是 oracle 上界。Phase 3 的三门、Part D 和 Part C 已完成，但
+在 R22 专家裁决前不打 freeze tag、不提交或推送。
+
+## 44. R22 通过与 Phase 3 冻结（2026-07-16）
+
+`REVIEW_VERDICTS.md` 的 R22 已完成独立功耗复算、两次 run 字段对照和公平性审查，正式
+裁决通过并授权关闭 Phase 3。审议特别冻结以下论文边界：4--5× 是统一理想参考速率下
+的组件模型能效，不挂到 `65.2 Mbit/J` 全栈锚点；本文以约 69% 的 DBF 理想速率换取约
+15% 的组件模型功耗；GreenMO-like 不是 GreenMO 算法复现；同步感知选择仍是 oracle
+上界，M>8 没有穷举标尺。
+
+代码按六个主题整理。前五个代码提交为：
+
+```text
+33718f9 feat: establish phase3 M>N platform and exhaustive anchor
+a59986e feat: add phase3 constrained port-selection algorithms
+22046f4 feat: validate phase3 full-stack net gain with AMC
+5f7cb02 feat: add phase3 SINR and rate characterization
+16ecc45 feat: add phase3 architecture energy comparison
+```
+
+第六个提交包含本节、R1--R22 审议记录、完整复现命令、独立系统/能效说明和冻结图片。
+annotated tag `phase3-freeze-2026-07-16` 指向该文档闭环提交。旧的 `.claude` 本地配置、
+R13/R14 临时思考稿及 pending 启动图不属于 Phase 3 冻结资产，没有纳入提交。
+
+Phase 3 关闭结论：受单标量 RF 链和物理 A/S 约束的 M>N 端口选择，在 TDL、开关损伤、
+同步和扫描同时存在时，借助 AMC 与至少 100 ms 的更新周期可获得 M=8/12/16 的
+`+0.45/+0.61/+0.71 bit/s/Hz` 净吞吐；增益来自信道观测后的选择和条件数改善，不是
+固定端口阵列增益。Dmax=2 码叠加没有稳定增值。R21 的理论是严谨表征与上下界而非新
+容量定理；R22 能效是组件模型而非硬件测量。R1--R22 实验程序由此完备，下一阶段只做
+论文写作或在新授权下开展增强实验。

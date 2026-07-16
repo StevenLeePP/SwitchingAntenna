@@ -541,3 +541,363 @@ sudo /home/bupt/tools/matlab/bin/matlab -batch \
 为 `.../type1_r15_ota_20260715_190556/`：正式 EVM² 倍率 2.112（门失败）；RMS-EVM
 字面倍率 1.957 只作凹压缩审计，不得用于改判。论文只能报告“33--43 dB 高 SNR
 单簇功能+趋势验证，离线模型偏乐观约 2×”，不能报告多 SNR 标定通过。
+
+## README 正式架构图复现
+
+该命令不需要 MATLAB 或板卡，只依赖 Python 3 和 Matplotlib；输出会覆盖 README 引用的
+`docs/images/system_architecture.png`：
+
+```bash
+cd /root/lap/SwitchingAntenna/c_demo
+python3 tools/render_architecture.py
+```
+
+## R16：Phase 3 Part A 平台与四条代数回归
+
+该实验是 RX 服务器上的纯离线 MATLAB，不访问 SDR、不启动 TX，也不需要 `sudo`：
+
+```bash
+ssh -tt -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+TYPE1_PHASE3_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+  /home/bupt/tools/matlab/bin/matlab -batch "type1_run_phase3_part_a"
+```
+
+冻结 seed 为 `20260716`。命令必须同时报告：`M=N,S=I` 的 stitched/virtual 逐位一致、
+M=8 理想标量链路和 `Htilde=S^T H` 的相对误差、占空比守恒/超限拒绝，以及
+`type1:Phase3IllegalFanout` 非法同相扇出拒绝。首个正式结果为：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_part_a_20260715_201908/
+phase3_part_a_r16.mat SHA-256:
+0e0281db0ac7d941627107db618fec283128aa4a130d478bcfc5cb2d666991fb
+```
+
+只验证四条代数地基，不运行 BER/SINR 扫描；不得把 `allPassed=true` 解读成 Phase 3
+端口选择算法或净增益门通过。
+
+## `SYSTEM_EXPLAINER.md` 主要数字复现索引
+
+同行说明文档没有生成新实验结果，只重述已经冻结的数据。逐用户 CFO 基线与基础补偿可
+在 RX 服务器用以下纯离线命令复现，不访问板卡、不需要 `sudo`：
+
+```bash
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+TYPE1_OFFLINE_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+  /home/bupt/tools/matlab/bin/matlab -batch "type1_run_offline_multiuser"
+```
+
+其余头条数字直接对应本文档已有章节：OU/相关建立抖动和 ICI-DF 对应“离线 Phase 2”，
+RX-LO/CPE 对应 R12，PSS acquisition 对应 R13，TDL 最终 3.15% 对应 R14，OTA EVM²
+2.112 no-go 对应 R15，M>N 四条代数地基对应 R16。禁止通过新跑 smoke 结果替换这些
+paper/freeze 口径。
+
+## R17：Phase 3 M=8 穷举标尺与 Gate 1
+
+该命令在 RX 服务器运行纯离线 20-seed TDL-A 穷举，不访问板卡、不需要 `sudo`。paper
+口径固定 2520 个 `M=8,N=4,Dmax=1` 候选、51 个搜索音调和全部 612 个评价子载波：
+
+```bash
+ssh -tt -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+TYPE1_R17_PROFILE=paper \
+TYPE1_PHASE3_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+  /home/bupt/tools/matlab/bin/matlab -batch \
+  "type1_run_phase3_r17_exhaustive"
+```
+
+正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r17_paper_20260716_000304/
+phase3_r17_exhaustive.mat:
+92b4ac29800518a2cd16f684c7ac9c70c74e27c1ad7d5d49a4a5ca250271322d
+```
+
+输出必须先通过 2520 候选唯一性、A/S 约束和 MMSE-SINR 直接公式等价回归，再打印每个
+seed 的 M=4/fixed-M8/exhaustive-M8 指标。正式门结果为 19/20、配对中位 `+2.420 dB`、
+单侧符号检验 `p=2.0027e-5`、`gatePassed=true`；seed `20261718` 的 `-0.050 dB` 必须
+保留。该命令不含开关损伤、扫描或 acquisition，不能用来声称 Gate 2/3 或 NetGain 通过。
+
+## R18：F1 精确穷举、在线算法与 Gate 2
+
+这是 RX 服务器上的纯离线 20-seed 实验，不访问 SDR、不启动 TX、**不需要 sudo**。
+它精确评价 166824 个 F1 调度，并成对运行 F1/F2 贪婪、局部松弛量化及四个基线：
+
+```bash
+ssh -tt -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+TYPE1_R18_PROFILE=paper \
+TYPE1_PHASE3_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+  /home/bupt/tools/matlab/bin/matlab -batch \
+  "type1_run_phase3_r18_gate2"
+```
+
+正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r18_paper_20260716_003616/
+phase3_r18_gate2.mat:
+14df40eb039a7b440633c708230a9c983b75d75b2922efb070812423704ccb18
+```
+
+输出应先报告 F1=166824、R17 是其子集、batch/scalar MMSE 误差约 `5.95e-14 dB`，随后
+给出 20 个 seed。正式结果为 F1 20/20 不低于 M4、贪婪 20/20 胜 M4、中位保留
+92.4%、`gatePassed=true`。F2 贪婪相对 F1 穷优的 TDL 中位为 `−0.203 dB`，不得删去。
+
+## R19：M=8 带损伤全波形 NetGain 与 Gate 3
+
+R19 必须显式指向已验收的 R18 MAT，保证调度、seed 和 TDL realization 成对。该命令会
+运行 20 个两帧全带宽链路、122.88 MS/s M 端口标量开关、PSS/PBCH、DM-RS、RZF、BER
+和 EVM，内存约 2.5 GB；仍是纯离线程序，不需要 `sudo`：
+
+```bash
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+TYPE1_R19_PROFILE=paper \
+TYPE1_PHASE3_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+TYPE1_R19_R18_MAT=/home/bupt/type1_offline_captures/\
+type1_phase3_r18_paper_20260716_003616/phase3_r18_gate2.mat \
+  /home/bupt/tools/matlab/bin/matlab -batch \
+  "type1_run_phase3_r19_gate3"
+```
+
+fresh 正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r19_paper_20260716_004011/
+phase3_r19_gate3.mat:
+5685b0cae5027f0ef6da90eba24e8b4a546586a510bba5310ad04b708e273df7
+```
+
+输出应先通过 identity/sum/scalar/beta 回归，再给出每 seed 的四臂 acquisition 与 BER。
+正式结果为损伤后 acquisition `[20,19,19,19]/20`、100 ms 更新的有效吞吐量增量
+`[0,−0.1218,−0.1229,−0.1233]`，因此代码中的固定-QPSK `gatePassed=false`。但 §7.4
+预注册的 SINR-quality 分解为 `[0,+2.141,+1.640,+1.468] dB`，按该原始定义 Gate 3
+通过。两者必须并列复现：前者是饱和 QPSK 加开销的系统 no-go，后者证明选择质量增益
+没有被损伤抹掉。
+
+逐位复现审计可比较两次 R19 目录，不重新解释统计口径：
+
+```matlab
+a=load('/home/bupt/type1_offline_captures/type1_phase3_r19_paper_20260716_003640/phase3_r19_gate3.mat');
+b=load('/home/bupt/type1_offline_captures/type1_phase3_r19_paper_20260716_004011/phase3_r19_gate3.mat');
+disp([isequal(a.report.ideal,b.report.ideal), ...
+      isequal(a.report.impaired,b.report.impaired), ...
+      isequal(a.report.betaMeta,b.report.betaMeta), ...
+      isequal(a.report.summary,b.report.summary), ...
+      isequal(a.report.validation,b.report.validation)])
+```
+
+预期输出为 `[1 1 1 1 1]`。
+
+## R20：AMC、同步感知选择、扫描曲线和 M=12/16
+
+R20 是 RX 服务器上的纯离线 50-seed TDL 实验，不访问 SDR、无需 `sudo`。先编译快速
+因果 IIR；paper 模式对全部 50 个 seed 做一帧/四帧 PSS acquisition，对前 20 个做完整
+解码。预计运行约 15 分钟、峰值内存约 3.2 GB：
+
+```bash
+ssh -tt -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+
+/home/bupt/tools/matlab/bin/mex -R2018a CFLAGS='$CFLAGS -O3' \
+  type1_phase3_iir_mex.c
+
+TYPE1_R20_PROFILE=paper \
+TYPE1_PHASE3_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+  /home/bupt/tools/matlab/bin/matlab -batch "type1_run_phase3_r20"
+```
+
+正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r20_paper_20260716_012732/
+phase3_r20.mat:
+eb15cc84b05ac2880ac0f789f36faec45a2e86decf98ccc7e9fe010395c3bb13
+```
+
+冻结输出应为 `acq4=[46,47,48,48,47]/50`，五臂依次为
+`M4/M8-data/M8-aware/M12-aware/M16-aware`；1 s nominal AMC 增益为
+`[0,+0.439,+0.449,+0.614,+0.710] bit/s/Hz`，`gatePassed=true`。M8-aware 的
+McNemar 为 1 rescue/0 loss、`p=1`，所以该命令**不支持**“同步感知选择显著改善同步”。
+一帧和四帧计数相同，也必须原样报告。
+
+查看扫描周期、AMC 门限敏感性和作废运行记录：
+
+```matlab
+f='/home/bupt/type1_offline_captures/type1_phase3_r20_paper_20260716_012732/phase3_r20.mat';
+load(f,'report');
+s=report.summary;
+disp([s.acq1Count;s.acq4Count;s.dataValidCount])
+disp([s.medianQualityDb;s.meanDecodedBER;s.medianSelectionObjectiveDb])
+disp(squeeze(s.amcGain(:,:,2)).')       % nominal AMC，行=更新周期
+disp(s.fixedQpskGainAt1Sec)
+```
+
+`.../type1_phase3_r20_paper_20260716_011035/` 使用了错误的频域 MMSE 噪声归一化，已在
+数量级审计中整体作废；禁止用它替换上述正式资产。AMC 是冻结 CQI-style 链路抽象，
+不是实际 16/64QAM 波形或 NR MCS 一致性测试。
+
+fresh 全量复跑目录为 `.../type1_phase3_r20_paper_20260716_014240/`。比较两份结果时忽略
+目录和创建时间，只比较科学字段：
+
+```matlab
+a=load('/home/bupt/type1_offline_captures/type1_phase3_r20_paper_20260716_012732/phase3_r20.mat');
+b=load('/home/bupt/type1_offline_captures/type1_phase3_r20_paper_20260716_014240/phase3_r20.mat');
+names={'preRegistration','validation','selection','data','acq1','acq4','acqDetail','summary'};
+same=false(size(names));
+for k=1:numel(names), same(k)=isequaln(a.report.(names{k}),b.report.(names{k})); end
+disp(same)
+```
+
+预期为 `[1 1 1 1 1 1 1 1]`；fresh MAT SHA-256 为
+`48570643bc037d570dfe4315e5a408ee52f5a7f73ae2e91e90a8eace1ebdf9da`。
+
+## R21 Part D：闭式 SINR、可达速率和几何/损伤边界
+
+R21 是纯离线理论闭合，不访问板卡、不需要 `sudo`。它读取冻结的 R20 MAT，按原 seed
+重新生成 TDL taps，验证闭式公式能否逐位复现原选择目标：
+
+```bash
+ssh -tt -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+
+TYPE1_R21_PROFILE=paper \
+TYPE1_R21_R20_MAT=/home/bupt/type1_offline_captures/\
+type1_phase3_r20_paper_20260716_012732/phase3_r20.mat \
+TYPE1_PHASE3_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+  /home/bupt/tools/matlab/bin/matlab -batch "type1_run_phase3_r21_theory"
+```
+
+正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r21_paper_20260716_090554/
+phase3_r21_theory.mat:
+12cd11d9c356e49fb25db2fec7eb8b2d7b74b33a068a5b2c7bbe202f93e701ba
+```
+
+输出应报告 R20 objective 最大误差 `8.88e-15 dB`、中位 min-user rate
+`[3.093,4.226,4.847,5.263] bit/s/Hz`、`gate=1`。这组 rate 是同 seed/S/TDL/noise 的
+理论选择头room，不包含全波形开关残差；实际系统净吞吐仍以 R20 AMC 结果为准。
+
+单独运行代数/Monte Carlo 回归：
+
+```bash
+/home/bupt/tools/matlab/bin/matlab -batch "type1_validate_phase3_theory"
+```
+
+预期闭式/既有引擎相对误差约 `9.91e-16`、显式 combiner 误差约 `3.90e-15`、J0 二次型
+与 50000-draw Monte Carlo 误差约 `0.00597`，且所有 bound/capacity slack 非负。
+
+fresh 目录为 `.../type1_phase3_r21_paper_20260716_090706/`。复现比较：
+
+```matlab
+a=load('/home/bupt/type1_offline_captures/type1_phase3_r21_paper_20260716_090554/phase3_r21_theory.mat');
+b=load('/home/bupt/type1_offline_captures/type1_phase3_r21_paper_20260716_090706/phase3_r21_theory.mat');
+names={'preRegistration','validation','objectiveDb','minUserRate','sumMmseRate', ...
+  'capacityLogDet','arrayMeanLinear','arrayMinLinear','lowerRate','epsilonBudget','summary'};
+same=false(size(names));
+for k=1:numel(names),same(k)=isequaln(a.report.(names{k}),b.report.(names{k}));end
+disp(same)
+```
+
+预期为 11 个 1。第一次 smoke 使用单样点占位波形，因 MATLAB FFT 自动维度而在生成
+信道前失败；修复为两样点后已全量重跑，该失败不产生可引用资产。
+
+## R22 Part C：统一能效、扫描能量与能量正比曲线
+
+R22 是纯离线功耗模型实验，不访问板卡、不需要 `sudo`。它读取冻结的 R20/R21 MAT，
+在同一批 50 个 TDL seed 上比较本文、GreenMO-like、DBF、部分连接 HBF 和全连接 HBF。
+功耗表、扫描公式及不可直接比较的口径见 [`PHASE3_ENERGY_MODEL.md`](PHASE3_ENERGY_MODEL.md)。
+
+先运行组件/代数回归：
+
+```bash
+ssh -tt -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+/home/bupt/tools/matlab/bin/matlab -batch "type1_validate_phase3_energy"
+```
+
+预期输出包含：
+
+```text
+Phase-3 R22 energy validation PASSED: GreenMO=0.762 W, DBF=2.032 W, scan=30.0%, frontend=0.
+```
+
+正式 50-seed 运行：
+
+```bash
+TYPE1_R22_PROFILE=paper \
+TYPE1_R22_R20_MAT=/home/bupt/type1_offline_captures/\
+type1_phase3_r20_paper_20260716_012732/phase3_r20.mat \
+TYPE1_R22_R21_MAT=/home/bupt/type1_offline_captures/\
+type1_phase3_r21_paper_20260716_090554/phase3_r21_theory.mat \
+TYPE1_PHASE3_OUTPUT_ROOT=/home/bupt/type1_offline_captures \
+  /home/bupt/tools/matlab/bin/matlab -batch "type1_run_phase3_r22_energy"
+```
+
+正式资产：
+
+```text
+/home/bupt/type1_offline_captures/type1_phase3_r22_paper_20260716_094916/
+phase3_r22_energy.mat:
+165eb3e2b5a17fec12a1a6ddb733826e780127de1706e556aff32c6de556477d
+phase3_r22_energy_efficiency.png:
+25474d2ae242cf0e4f283668742147a4b6e7295e881d51ed27e6a1b7b406b84f
+phase3_r22_energy_proportionality.png:
+d2a3dd17384a277b577c6ad0c1b2a039dedb2a0f5f3137680ceb5a823d12caff
+```
+
+输出应报告 `R21 rate error=0`、M=16 标称功耗
+`[1.93,1.93,12.26,3.35,3.83] W`、统一理想分子下能效
+`[200.1,206.2,45.5,88.3,108.5] Mbit/J` 和 `gate=1`。这些数字是组件模型，不是硬件
+功率计测量；GreenMO-like 也不是 GreenMO 论文算法的复现。
+
+查看统一功耗、更新周期和 R20 全栈锚点：
+
+```matlab
+f='/home/bupt/type1_offline_captures/type1_phase3_r22_paper_20260716_094916/phase3_r22_energy.mat';
+load(f,'report'); s=report.summary;
+disp(s.medianIdealSumRate)
+disp(s.primaryPowerW(:,:,2))
+disp(s.primaryEnergyEfficiencyMbitPerJ(:,:,2))
+disp(squeeze(s.energyEfficiencyBitsPerJ(4,1,:,2))/1e6)
+disp(s.measuredAnchorEeAggregateBitsPerJ(:,5)/1e6)
+disp(s.loadCurve.powerW)
+disp(s.loadCurve.scanEnergyPerUpdateJ)
+```
+
+最后一组 aggregate 全栈锚点应为 M4/M8/M12/M16 的
+`[38.4,55.5,61.7,65.2] Mbit/J`。禁止将其中 M16 的 `65.2` 与 DBF/HBF 的理想能效
+直接排名，因为后者没有经过相同的 acquisition、开关损伤、AMC 和解码链。
+
+fresh 全量复跑目录为 `.../type1_phase3_r22_paper_20260716_095041/`。逐字段比较：
+
+```matlab
+a=load('/home/bupt/type1_offline_captures/type1_phase3_r22_paper_20260716_094916/phase3_r22_energy.mat');
+b=load('/home/bupt/type1_offline_captures/type1_phase3_r22_paper_20260716_095041/phase3_r22_energy.mat');
+names={'preRegistration','validation','rate','greenAddedEdges','breakdown','summary'};
+same=false(size(names));
+for k=1:numel(names),same(k)=isequaln(a.report.(names{k}),b.report.(names{k}));end
+disp(same)
+```
+
+预期为 `[1 1 1 1 1 1]`。fresh MAT SHA-256 为
+`510c8feb93a3b958e305b702fbfd452650eee080b7acaf6760edac39614e547e`。第一次 smoke 的
+R20 AMC 锚点少乘四流聚合系数；该单位问题在正式运行前修复，smoke 不得引用。
+
+## Phase 3 冻结点检查
+
+R22 审议通过后，Phase 3 冻结于 annotated tag `phase3-freeze-2026-07-16`。本地或克隆
+仓库后可用以下只读命令核对 tag、六个主题提交和工作树中的冻结代码：
+
+```bash
+git show --no-patch --decorate phase3-freeze-2026-07-16
+git log --oneline phase2-freeze-2026-07-15..phase3-freeze-2026-07-16
+git diff --stat phase2-freeze-2026-07-15..phase3-freeze-2026-07-16
+```
+
+冻结 tag 应包含平台/枚举、选择算法、全栈 AMC、理论、能效和文档审议六个主题提交。
+R16--R22 验证命令仍按本文件相应章节运行；tag 不包含远端大体积 MAT/raw IQ，只保存
+代码、正式路径、SHA-256、统计量和图片。
