@@ -1,6 +1,6 @@
 # 交接文档：快速开关单链多用户 MIMO 研究与实时 C/MEX 平台
 
-更新时间：2026-07-16（Asia/Shanghai）
+更新时间：2026-07-26（Asia/Shanghai）
 
 工程：`/root/lap/SwitchingAntenna/c_demo`
 
@@ -8,29 +8,78 @@
 
 最近已推送冻结点：`phase3-freeze-2026-07-16`，commit `4c60340`
 
-最新本地科学提交：`94c91ed`（R23 E1--E3、手册、全部当前 Markdown 和正式图；未 push）
+最新本地交接提交：`f4a92a3`（记录 R23 补充实验和交接状态；未 push）
 
-当前状态：Phase 0--3 已冻结；投稿前 E1--E3 已由 R23 审议通过。R1--R23 实验程序
-全部关闭，下一阶段是论文写作；R23 资产已本地提交，尚未 push 或打新 tag。
+当前状态：Phase 0--3 已冻结；投稿前 E1--E3 已由 R23 审议通过。当前正在把全部既有实验重新整理成一份从零可读、包含成功与失败结果的 `EXPERIMENT_REPORT.md`。该报告及配套图、绘图脚本和少量 Phase 1 补跑资产目前仍在工作树中，尚未提交；下一阶段的工程实验设计将主要从这份报告出发，但不得绕过预注册、正式 MAT 和专家裁决。
 
-本文写给一个完全没有上下文的新会话。不要根据文件名猜项目状态，也不要从某个单点正
-结果开始继续扩展；先按第 0 节顺序阅读，再检查第 9 节的工作树归属。
+本文写给一个完全没有上下文的新会话。假设接手者不知道系统结构、Phase 的含义、OTA 与离线仿真的区别，也不知道哪些算法曾经失败。不要根据文件名猜项目状态，不要只从某张好看的图或某个单点正结果开始继续扩展；先按第 0 节顺序阅读，再检查第 9 节的工作树归属。
 
 ---
 
-## 0. 新会话首先做什么
+## 0. 本次交接最重要的事情：先理解 `EXPERIMENT_REPORT.md`
+
+### 0.1 为什么它是后续工作的主要入口
+
+`EXPERIMENT_REPORT.md` 是当前工程最重要的实验级入口。过去的资料分别按 Phase、代码提交、专家轮次和论文章节组织；对零上下文接手者而言，这会导致模型、算法和结论像是凭空出现。新报告改成按“问题出现的原因 → 实验如何控制变量 → 得到什么数据 → 为什么这样解释 → 哪些结论不能外推”的顺序，完整收纳了 38 个实验：
+
+- 实验 1--5：reference、C/MEX 等价、direct RX、实时队列和可视化；
+- 实验 6--11：Phase 0--1 基线、静态开关损伤、多用户 CFO、TDL-A、相噪锚定和 OTA 单段配对；
+- 实验 12--28：Phase 2 时变开关、OU 抖动、ICI-DF、全栈迁移失败、RX-LO、PSS acquisition、TDL 最终曲线和 15 段 OTA 配对；
+- 实验 29--35：Phase 3 的 M>N 单链约束、穷举标尺、端口选择、AMC、扫描开销、理论表征和能效；
+- 实验 36--38：投稿补充 E1--E3，即估计 CSI 的非 oracle 选择、单用户 FAS 分集和扫描周期到移动速度的映射。
+
+报告不是只保存成功实验。它明确保留预注册 no-go、被数据推翻的假设、作废的 smoke、genie/oracle 上界和无法迁移到 TDL 全栈的算法。后续项目工程的具体实验设计应优先查阅这份报告，因为新实验通常不是孤立功能，而是要回答旧实验留下的某个物理问题、统计缺口或部署边界。如果不先阅读相关实验，很容易重复已经被证伪的路线，或在 flat/single-seed 场景再次得到无法迁移的漂亮数字。
+
+### 0.2 怎样阅读一个实验
+
+报告中每个实验尽量使用同一结构。接手者应按以下顺序阅读，而不是只看“实验结果”：
+
+1. **实验介绍**：解释系统此前遇到了什么问题、为什么需要这个实验，以及它和前后实验的因果关系；
+2. **实验目的**：把本轮要回答的问题压缩成可以被数据判定的目标；
+3. **详细设计**：说明输入波形、信道、损伤、对照臂、控制变量、seed、统计档和接收算法；
+4. **计算过程与量级判断**：在看结果前说明公式、单位、预期量级和合理性检查；
+5. **实验结果**：给出正式数字、表格和图片；
+6. **分析与结论**：说明数据支持什么、不支持什么，以及结果是通过、no-go、趋势级还是上界；
+7. **复现/脚本索引**：把实验映射到运行器、验证器、正式资产和命令文档。
+
+设计新实验时，应先在报告第 2 节索引中找到最接近的旧实验，再检查该实验的详细设计和边界。例如要继续研究动态开关补偿，应从实验 12--22 和实验 27 开始，而不是只读实验 15 的 flat 正结果；要继续研究端口选择，应同时阅读实验 30--33、36 和 38，因为它们分别限定了理想 headroom、全栈净收益、估计 CSI 损失和移动速度边界。
+
+### 0.3 报告很重要，但它不是唯一事实源
+
+不同文件承担不同职责，不能互相替代：
+
+| 问题 | 首要依据 |
+|---|---|
+| 为什么做这个实验、实验之间有什么因果关系 | `EXPERIMENT_REPORT.md` |
+| 代码实际实现了什么 | 对应 `.m/.c` 源码和 validation 脚本 |
+| 精确运行命令、远端目录、环境变量和 sudo 条件 | `RUN_COMMANDS.md` |
+| 每次修改、seed、预注册门槛和正式原始数字 | `EXPERT_REVIEW.md` |
+| 专家是否验收、如何裁决 pass/no-go | `REVIEW_VERDICTS.md` |
+| 最精确的数值和逐 seed 结果 | 正式 `.mat` 资产及其 SHA |
+| 面向论文的模型、理论和整体叙事 | `TECHNICAL_MANUAL.md`、`IMPAIRMENT_MODELS.md`、`PAPER_OUTLINE.md` |
+
+若报告、代码和冻结资产不一致，优先级不是“哪份 Markdown 写得最新”，而是：先检查预注册和专家裁决，再核对正式 MAT 与生成它的冻结代码，最后修正文档。报告中的 PNG 只是正式 MAT 或冻结审计数字的可视化，不是独立证据；图与表冲突时不能凭图片改结论。
+
+### 0.4 当前报告的已知缺口
+
+`EXPERIMENT_REPORT.md` 的实验 8 目前存在一个已经识别、尚未完成闭环的设计/表述缺口：文字把“分数定时”写进了单变量因素，但 `type1_run_phase1_sweeps.m` 实际六条一维曲线只有隔离度、建立时间、CFO、相噪、建立边沿抖动和功率；分数定时只出现在“定时系数×隔离度”的二维 `cond(Hhat)` 热图中。四张二维图是围绕隔离度的有限筛查，不是已经证明“最重要”的四组交互。
+
+新会话不得把现有二维图冒充定时单变量结论。若用户授权补齐，应先预注册第七条定时单变量扫描，至少同时记录 BER、EVM、信道估计 NMSE、`cond(Hhat)` 和真实/模型复合信道条件数，并用交互残差区分“定时主效应、隔离度主效应和真正交互”。纯 CP 内定时偏差理论上主要给每个用户信道列增加单位模相位斜坡；现有 `cond(Hhat)` 增长包含信道估计插值伪影，不能写成物理信道真的恶化。
+
+### 0.5 新会话首先做什么
 
 按以下顺序读取，职责不要混淆：
 
-1. `HANDOFF.md`：当前任务、已完成状态、环境、风险和下一步，即本文；
-2. `README.md`：工程首页、实时/离线架构、MEX 下放边界、关键脚本和结果图；
-3. `TECHNICAL_MANUAL.md`：面向通信同行的论文式完整技术叙事；
-4. `EXPERT_REVIEW.md`：每次改动、预注册、seed、原始数字、结论及边界的唯一总账；
-5. `REVIEW_VERDICTS.md`：专家 R1--R23 裁决，属于专家维护文件；
-6. `RUN_COMMANDS.md`：所有远端、离线、OTA、fresh 对照和正式资产路径；
-7. `PAPER_OUTLINE.md`：论文结构和 E1--E3 补充实验要求，属于用户/专家维护文件；
-8. `IMPAIRMENT_MODELS.md`、`PHASE3_PLAN.md`、`PHASE3_ENERGY_MODEL.md`：精确模型、
-   Phase 3 物理约束和能效口径。
+1. `HANDOFF.md`：当前任务、状态、环境、风险和下一步，即本文；
+2. `EXPERIMENT_REPORT.md`：38 个实验的背景、设计、结果、失败边界和脚本覆盖；这是后续实验设计的主要入口；
+3. `README.md`：工程首页、实时/离线架构、MEX 下放边界、关键脚本和结果图；
+4. `TECHNICAL_MANUAL.md`：面向通信同行的论文式完整技术叙事；
+5. `EXPERT_REVIEW.md`：每次改动、预注册、seed、原始数字、结论及边界的项目总账；
+6. `REVIEW_VERDICTS.md`：专家 R1--R23 裁决，属于专家维护文件；
+7. `RUN_COMMANDS.md`：所有远端、离线、OTA、fresh 对照和正式资产路径；
+8. `PAPER_OUTLINE.md`、`PAPER_DETAILED_OUTLINE.md`：论文结构和补充要求，属于用户/专家维护内容；
+9. `IMPAIRMENT_MODELS.md`、`PHASE3_PLAN.md`、`PHASE3_ENERGY_MODEL.md`：精确模型、Phase 3 物理约束和能效口径；
+10. `OTA_CAMPAIGN_PREREG.md`：若重新开放 OTA 采集，必须遵守的预注册设计。
 
 随后只读检查：
 
@@ -42,8 +91,7 @@ git show --no-patch --decorate phase2-freeze-2026-07-15
 git show --no-patch --decorate phase3-freeze-2026-07-16
 ```
 
-不要先提交、清理、移动或覆盖任何文件。当前工作树包含用户/专家文件和 R23 已验收但
-尚未提交的实验，不是可以随意 reset 的临时目录。
+不要先提交、清理、移动或覆盖任何文件。当前工作树包含用户正在修改的实验报告、代码、正式图片、补跑 MAT、论文大纲和 OTA 预注册文件，不是可以随意 reset 的临时目录。
 
 ---
 
@@ -319,8 +367,21 @@ E3 用 `Tc=0.423/fd`、`fd=v/lambda` 做解析映射。3.2 GHz 下 100 ms 对应
 
 ## 6. 如何复现所有数据
 
-`RUN_COMMANDS.md` 是唯一权威命令文档。本节只给冷启动路径；任何数字应回到对应 R 编号
-的正式 MAT，而不是从 README 表格反推。
+先在 `EXPERIMENT_REPORT.md` 找到实验编号，理解它为什么运行、有哪些对照臂和哪些结果不可外推；再到报告第 12 节找到对应运行器/验证器，最后使用 `RUN_COMMANDS.md` 的精确命令。`RUN_COMMANDS.md` 是唯一权威命令文档。本节只给冷启动路径；任何数字应回到对应 R 编号的正式 MAT，而不是从 README 或实验报告中的四舍五入表格反推。
+
+最短追溯链是：
+
+```text
+科学问题
+  -> EXPERIMENT_REPORT.md 的实验编号和详细设计
+  -> 对应 type1_run_* / type1_validate_* 源码
+  -> RUN_COMMANDS.md 的命令、环境变量和输出目录
+  -> 正式 MAT/PNG 及 SHA
+  -> EXPERT_REVIEW.md 的预注册与项目方解释
+  -> REVIEW_VERDICTS.md 的独立复现和最终裁决
+```
+
+不要只运行正文提到的主脚本而跳过 validation。报告中的“通过”通常同时依赖代数不变量、同 seed 成对、fresh 重跑和字段级 `isequaln`，不是“MATLAB 没报错”就算通过。
 
 ### 6.1 同步代码到 RX 前的规则
 
@@ -456,7 +517,8 @@ sudo env TYPE1_DIRECT_DURATION_SEC=60 TYPE1_FIFO_RING_BLOCKS=2048 \
 | Phase 2 | `type1_run_phase2_*`、`type1_analyze_ici_*`、RX-LO/PSS helpers | 动态损伤、ICI-DF、同步、OTA |
 | Phase 3 | `type1_phase3_*`、`type1_run_phase3_*`、`type1_validate_phase3_*` | M>N 平台、选择、理论、能效 |
 | 投稿补充 | `type1_run_paper_*`、`type1_validate_paper_*`、`type1_phase3_estimate_scan_csi.m` | E1--E3 |
-| 文档 | 根目录 Markdown | 架构、模型、审议、复现、论文叙事 |
+| 实验主报告 | `EXPERIMENT_REPORT.md` | 38 个实验的背景、详细设计、结果、失败边界、图片和脚本覆盖；后续实验设计首要入口 |
+| 其他文档 | 根目录其余 Markdown | 架构、模型、审议、复现、论文叙事和预注册 |
 | 正式 Git 图片 | `docs/images/` | README/手册引用的冻结图 |
 | 工具 | `tools/` | 架构图等确定性生成脚本 |
 | 小型样例 | `data/` | 可进 Git 的短 IQ/reference 辅助数据 |
@@ -488,6 +550,7 @@ sudo env TYPE1_DIRECT_DURATION_SEC=60 TYPE1_FIFO_RING_BLOCKS=2048 \
 
 | 文件 | 职责 |
 |---|---|
+| `EXPERIMENT_REPORT.md` | 当前最重要的实验级说明和设计入口；按 38 个实验解释背景、控制变量、结果、失败边界及代码映射 |
 | `README.md` | 独立工程首页和结果索引 |
 | `SYSTEM_EXPLAINER.md` | 面向通信大同行的较短说明 |
 | `TECHNICAL_MANUAL.md` | 论文式完整手册；含执行摘要、术语、模型、实验、应用 |
@@ -515,45 +578,30 @@ sudo env TYPE1_DIRECT_DURATION_SEC=60 TYPE1_FIFO_RING_BLOCKS=2048 \
 
 ## 9. 当前工作树与文件归属
 
-R23 已验收资产已进入本地 commit `94c91ed`：
+R23 已验收资产进入本地 commit `94c91ed`，交接状态进入 `f4a92a3`；两者都尚未推送到 `origin/cmex`。在此之后，用户又开展了实验报告重写和图表补全，因此当前工作树不是干净的冻结树。
 
-```text
-HANDOFF.md
-TECHNICAL_MANUAL.md
-EXPERT_REVIEW.md
-README.md
-RUN_COMMANDS.md
-docs/images/paper_e1_online_selection.png
-docs/images/paper_e2_fas_diversity.png
-docs/images/paper_e3_mobility_mapping.png
-type1_phase3_scan_matrix.m
-type1_phase3_estimate_scan_csi.m
-type1_validate_paper_e1_online_selection.m
-type1_plot_paper_e1_result.m
-type1_run_paper_e1_online_selection.m
-type1_run_paper_e2_fas_diversity.m
-type1_run_paper_e3_mobility_mapping.m
-```
+截至 2026-07-26，本轮最重要的未提交资产是：
 
-以下 Markdown 由用户明确要求随本轮“一并提交”，但所有权和权威性边界保持不变：
+| 资产 | 当前意义 | 接手规则 |
+|---|---|---|
+| `EXPERIMENT_REPORT.md` | 38 个实验的全量报告，后续实验设计主要入口 | 不得删除或用旧手册覆盖；修改前先核对对应代码和冻结证据 |
+| `type1_run_phase1_sweeps.m` | Phase 1 pilot 扫描的当前实现 | 已知不含独立 timing 一维曲线；不要让文档继续声称已运行 |
+| `type1_plot_phase1_sweeps.m` | 从保存 MAT 重绘六条一维和四张二维图 | 只重绘，不产生新的通信实验数据 |
+| `data/experiment_phase1_pilot_20260720.mat` | 实验 8 当前 pilot 小型结果 | 属于补图/有限统计资产，不是 paper 级 BER |
+| `tools/plot_experiment_report_figures.py` | 将冻结审计数字画成报告补充图 | 图必须标注来源，不能伪装为 fresh 仿真 |
+| `docs/images/experiment_*.png` | 实验报告引用的图像 | 图表不一致时以正式 MAT 和裁决为准 |
+| `OTA_CAMPAIGN_PREREG.md` | 若重开多 SNR OTA 的预注册 | 未获授权不得擅自开始板卡采集 |
+| `PAPER_DETAILED_OUTLINE.md` | 用户/专家的详细论文结构 | 保持用户内容，不代替实验事实总账 |
+| `EXPERT_REVIEW.md`、`README.md`、`RUN_COMMANDS.md`、`TECHNICAL_MANUAL.md` | 与报告重写相关的已修改文档 | 提交前逐一审查 diff，不能假定全由当前任务产生 |
 
-```text
-REVIEW_VERDICTS.md        # 专家 R23 原文；纳入版本控制，但后续不要代专家改写
-PAPER_OUTLINE.md          # 用户/专家论文大纲
-R13_thinking.md           # 历史推理稿，不是冻结结论
-R14_thinking.md           # 历史推理稿，不是冻结结论
-```
-
-以下仍不属于本轮提交：
+以下仍应默认视为本地工具或早期临时资产，除非用户明确要求，否则不要混入科学提交：
 
 ```text
 .claude/                  # 本地工具配置
-pending_startup_*.png     # 早期队列临时图，未被当前 README/手册引用
+pending_startup_*.png     # 早期队列图；先确认是否已被实验报告引用及是否需要迁入 docs/images
 ```
 
-开始工作前重新运行 `git status --short`，因为用户可能在交接后继续修改
-`REVIEW_VERDICTS.md`。即使它已经被 Git 跟踪，也不要代专家重写。不要用
-`git reset --hard`、`git checkout --` 或批量清理 untracked。
+上述列表只是本次交接快照，不代替实时 `git status --short`。开始工作前必须重新检查状态和 diff；用户可能继续修改实验报告或专家文档。即使 `REVIEW_VERDICTS.md` 已被 Git 跟踪，也不要代专家重写。不要使用 `git reset --hard`、`git checkout --`、`git clean` 或批量清理 untracked。
 
 ---
 
@@ -575,6 +623,9 @@ pending_startup_*.png     # 早期队列临时图，未被当前 README/手册�
     full-stack 锚点，两者不能混排。
 11. **两阶段启动只做了 10 s 最新对比。** 旧 60 s 数据来自 517 ms 启动版本；若论文要
     声称最新启动的 60 s 队列统计，应重新 OTA 实测，而不是拼接旧结果。
+12. **`EXPERIMENT_REPORT.md` 尚处于工作树审校阶段。** 它已经覆盖 38 个实验和脚本清单，但还没有形成新的提交/freeze；不能因为文字完整就把它当成已经由 R24 审议的冻结事实。
+13. **实验 8 缺独立分数定时单变量扫描。** 当前六条一维曲线不含 timing，timing 只在二维 `timingIsolation` 中出现；报告表述必须先改准确，是否补跑第七条曲线需用户明确授权和预注册。
+14. **报告图片的证据级别不同。** 一部分直接来自正式 MAT，另一部分由 Python 把冻结审计数字可视化；后者用于帮助阅读，不等于重新运行了实验。所有图必须保留来源说明。
 
 ---
 
@@ -628,26 +679,42 @@ pending_startup_*.png     # 早期队列临时图，未被当前 README/手册�
 
 ## 12. 下一步计划
 
-### 12.1 立即下一步
+### 12.1 后续任何实验的标准入口
 
-1. 按 R23 将“吞吐域 M12 成为甜点、估计误差使最优 M 下移”写入论文 §V/§VII；
-2. 以 `PAPER_OUTLINE.md` 为骨架进入论文写作，R1--R23 不再新增实验；
-3. 核对本地提交 `94c91ed` 和随后的交接状态提交；
-4. 由用户决定是否 push 和是否打 `paper-supplement-freeze-*` tag；当前不要自行 push；
-5. 写作中若发现真正的图表缺口，先单独预注册，再请求用户重新开放实验。
+后续项目工程实现的具体实验设计，大部分应从 `EXPERIMENT_REPORT.md` 出发，遵守以下顺序：
 
-### 12.2 若论文审稿前只做必要增强
+1. 在第 2 节实验索引中找到最接近的既有实验，并完整阅读其“实验介绍—目的—设计—量级—结果—边界”；
+2. 明确新工作是在补旧实验的哪一个缺口，而不是只写“优化性能”；
+3. 从旧实验复制共同 reference、信道、seed、对照臂和统计口径，只改变本轮预注册的目标因素；
+4. 先写代数不变量和 off 退化回归，再运行 smoke；smoke 只验证路径，不能形成论文结论；
+5. 在看结果前把变量坐标、主指标、置信区间、pass/no-go 门槛、失败分类和停止规则写入 `EXPERT_REVIEW.md` 或用户指定的预注册文档；
+6. pilot/paper 必须使用同 seed 成对、多 TDL realization，并保留 outage、失败 seed 和反例；
+7. 得到数据后同时更新实验报告、`EXPERT_REVIEW.md` 和 `RUN_COMMANDS.md`，说明可以得出什么以及不能得出什么；
+8. 只有专家裁决通过后，才能把结论升级为冻结主张；no-go 和作废运行同样要保留。
 
+特别注意：报告是设计入口，不是允许直接照抄旧参数的理由。新实验若改变物理问题，例如从 flat 变为 TDL、从 oracle 变为估计 CSI、从离线变为 OTA、从固定信道变为移动信道，就必须重新审查指标和门槛。
+
+### 12.2 立即下一步
+
+1. 完成 `EXPERIMENT_REPORT.md` 的逐实验审校，当前优先修正文档中凭空出现、名词未解释、图表缺失或设计与代码不一致的内容；
+2. 对实验 8 明确区分“历史实际六条一维扫描”和“尚未运行的 timing 一维扫描”；未经授权不要补数据；
+3. 按 R23 将“吞吐域 M12 成为甜点、估计误差使最优 M 下移”写入论文 §V/§VII；
+4. 以 `PAPER_OUTLINE.md`/`PAPER_DETAILED_OUTLINE.md` 为骨架进入论文写作，R1--R23 已冻结的实验不因改写报告而自动重开；
+5. 提交前检查当前工作树中报告、图片、绘图脚本、Phase 1 pilot MAT 和既有用户修改的归属，不能一把全加；
+6. 由用户决定是否 push 和是否打新的 paper/report tag；当前不要自行 push；
+7. 写作中若发现真正的实验缺口，先单独预注册并请求用户重新开放实验。
+
+### 12.3 若论文审稿前只做必要增强
+
+- 若用户批准，补做实验 8 的分数定时一维曲线和交互残差分析，避免把 `cond(Hhat)` 插值伪影解释成真实物理恶化；
 - 把 E1 DM-RS 选择器部署到 direct RX 控制面，做真实控制时延/扫描更新闭环；
 - 若需要多 SNR OTA 定量标定，用外部衰减器或 TX 功率步进覆盖约 5--25 dB，不能只调
   RX gain；
 - 若需要最新队列主张，重跑两阶段 60 s OTA 并报告 pending/dropNew/分段时延。
 
-### 12.3 明确不在当前论文继续做
+### 12.4 明确不在当前论文继续做
 
-R23 已明确“下一阶段为论文写作，不再新增实验”。TX/TMA、ISAC、RIS、子带 E4、多
-SNR OTA 重采和真实 PCB 均未获当前轮授权；除非用户明确重新开放，不要主动扩展。真实
-开关 PCB、移动跟踪和目录重构适合作为独立后续项目。
+R23 已明确“下一阶段为论文写作，不再新增实验”。当前对 `EXPERIMENT_REPORT.md` 的补充属于既有证据整理，不等于开放新的无线实验。TX/TMA、ISAC、RIS、子带 E4、多 SNR OTA 重采和真实 PCB 均未获当前轮授权；除非用户明确重新开放，不要主动扩展。真实开关 PCB、移动跟踪和目录重构适合作为独立后续项目。
 
 ---
 
@@ -655,12 +722,13 @@ SNR OTA 重采和真实 PCB 均未获当前轮授权；除非用户明确重新�
 
 每次代码或实验改动必须同时完成：
 
-1. `EXPERT_REVIEW.md`：记录改了什么、配置/seed、原始数字、可得结论、不能得到什么；
-2. `RUN_COMMANDS.md`：维护可复制命令、输入输出、远端/sudo 条件和正式路径；
-3. `README.md`：提交变更记录精简追加一行；
-4. 最终回复：简短说明做了什么、效果、下一步；
-5. 修改专家意见前先审查其物理和统计合理性；有实质冲突时停止并请求裁决；
-6. R23 已完成科学验收和本地提交，但未经用户明确授权仍不要 push 或创建远端 tag。
+1. `EXPERIMENT_REPORT.md`：新增或修改对应实验的背景、目的、设计、结果、分析、边界、图和脚本索引；不能只追加一个结论数字；
+2. `EXPERT_REVIEW.md`：记录改了什么、配置/seed、原始数字、可得结论、不能得到什么；
+3. `RUN_COMMANDS.md`：维护可复制命令、输入输出、远端/sudo 条件和正式路径；
+4. `README.md`：提交变更记录精简追加一行；
+5. 最终回复：简短说明做了什么、效果、下一步；
+6. 修改专家意见前先审查其物理和统计合理性；有实质冲突时停止并请求裁决；
+7. R23 已完成科学验收和本地提交，但未经用户明确授权仍不要 push 或创建远端 tag。
 
 文档/代码交付前至少执行：
 

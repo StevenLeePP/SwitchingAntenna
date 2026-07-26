@@ -1,8 +1,10 @@
 function results = type1_run_phase1_sweeps()
-%TYPE1_RUN_PHASE1_SWEEPS Six 1-D and four 2-D offline Phase-1 pilot scans.
+%TYPE1_RUN_PHASE1_SWEEPS Seven 1-D and four 2-D offline Phase-1 pilot scans.
 %   Zero-error points are plotted as the finite upper bound 1/Nbits, never
 %   as a fictitious logarithmic zero.  Set TYPE1_SWEEP_PROFILE=pilot for the
-%   denser grid; smoke is the fast structural regression.
+%   denser grid; smoke is the fast structural regression.  Every 2-D point
+%   stores BER, EVM, cond(Hhat) P95, error/bit counts, and failure state so
+%   the plotting stage does not silently discard valid experiment outputs.
 
 cfg = type1_config(); package = type1_load_package();
 profile = lower(string(getenv('TYPE1_SWEEP_PROFILE')));
@@ -15,7 +17,7 @@ else
     oneD = [0 .25 .5 .75 1]; twoD = [0 .25 .5 .75 1]; iso = [15 23.75 32.5 41.25 50]; rise = [0 2.5 5 7.5 10];
     isoCurve = [15 25 35 50 Inf]; riseCurve = [0 1 3 5 10]; jitterCurve = [0 20 50 100 200];
 end
-names = {'isolation','rise','cfo','phaseNoise','jitter','power'};
+names = {'isolation','rise','cfo','timing','phaseNoise','jitter','power'};
 curves = struct;
 for k=1:numel(names)
     values = oneD;
@@ -25,37 +27,52 @@ for k=1:numel(names)
     curves.(names{k}) = sweep1d(names{k}, values);
 end
 heatmaps = struct;
-heatmaps.isolationRise = sweep2d('isolationRise', iso, rise, 'ber');
-heatmaps.cfoIsolation = sweep2d('cfoIsolation', twoD, iso, 'ber');
-heatmaps.powerIsolation = sweep2d('powerIsolation', twoD, iso, 'ber');
-heatmaps.timingIsolation = sweep2d('timingIsolation', twoD, iso, 'condHatP95');
+heatmaps.isolationRise = sweep2d('isolationRise', iso, rise, numel(iso), 1);
+heatmaps.cfoIsolation = sweep2d('cfoIsolation', twoD, iso, 1, numel(iso));
+heatmaps.powerIsolation = sweep2d('powerIsolation', twoD, iso, 1, numel(iso));
+heatmaps.timingIsolation = sweep2d('timingIsolation', twoD, iso, 1, numel(iso));
+bitsPerPoint = frames*numel(cfg.dataSlots)*package.nInfoBitsPerSlotLayer*cfg.nLayers;
 results = struct('profile',char(profile),'framesPerPoint',frames, ...
+    'bitsPerPoint',bitsPerPoint,'berPlotFloor',1/bitsPerPoint, ...
     'curves',curves,'heatmaps',heatmaps);
 out = output_dir(cfg, profile); save(fullfile(out,'phase1_sweeps.mat'),'results','-v7.3');
 plot_results(results,out); fprintf('Phase-1 %s sweeps saved: %s\n',profile,out);
 
     function entry = sweep1d(name, values)
         entry = struct('values',values,'ber',zeros(size(values)),'evm',zeros(size(values)), ...
-            'estimatedCondP95',zeros(size(values)),'failures',false(size(values)));
+            'estimatedCondP95',zeros(size(values)),'rawBer',zeros(size(values)), ...
+            'errors',zeros(size(values)),'bits',zeros(size(values)), ...
+            'failures',false(size(values)));
         for i=1:numel(values)
             m=measure(apply_case(name,values(i)),i); entry.ber(i)=m.ber; entry.evm(i)=m.evm;
-            entry.estimatedCondP95(i)=m.condHatP95; entry.failures(i)=m.failure;
+            entry.estimatedCondP95(i)=m.condHatP95; entry.rawBer(i)=m.rawBer;
+            entry.errors(i)=m.errors; entry.bits(i)=m.bits; entry.failures(i)=m.failure;
         end
     end
-    function entry = sweep2d(name, x, y, metric)
-        entry=struct('x',x,'y',y,'metric',metric,'values',nan(numel(y),numel(x)));
-        for ix=1:numel(x), for iy=1:numel(y)
-            m=measure(apply_case(name,[x(ix) y(iy)]),100+ix+10*iy);
-            if strcmp(metric,'ber'), entry.values(iy,ix)=m.ber; else, entry.values(iy,ix)=m.condHatP95; end
-        end,end
+    function entry = sweep2d(name, x, y, baselineXIndex, baselineYIndex)
+        shape=[numel(y) numel(x)];
+        entry=struct('x',x,'y',y,'ber',nan(shape),'evm',nan(shape), ...
+            'estimatedCondP95',nan(shape),'rawBer',nan(shape), ...
+            'errors',nan(shape),'bits',nan(shape),'failures',false(shape), ...
+            'baselineXIndex',baselineXIndex,'baselineYIndex',baselineYIndex);
+        for ix=1:numel(x)
+            for iy=1:numel(y)
+                m=measure(apply_case(name,[x(ix) y(iy)]),100+ix+10*iy);
+                entry.ber(iy,ix)=m.ber; entry.evm(iy,ix)=m.evm;
+                entry.estimatedCondP95(iy,ix)=m.condHatP95;
+                entry.rawBer(iy,ix)=m.rawBer; entry.errors(iy,ix)=m.errors;
+                entry.bits(iy,ix)=m.bits; entry.failures(iy,ix)=m.failure;
+            end
+        end
     end
     function sim = apply_case(name,value)
         sim=type1_offline_sim_config(); sim.frames=frames; sim.assertIdealBaseline=false;
-        u=type1_offline_multiuser_config(); z=zeros(1,4);
+        u=type1_offline_multiuser_config();
         switch name
             case 'isolation', sim.switch.isolationDb=value; sim.switch.settlingRiseNs=0;
             case 'rise', sim.switch.settlingRiseNs=value;
             case 'cfo', sim.userCfoHz=u.userCfoHz*value;
+            case 'timing', sim.userTimingSamples=u.userTimingSamples*value;
             case 'phaseNoise', sim.userPhaseNoiseStdRadPerSample=u.userPhaseNoiseStdRadPerSample*value;
             case 'jitter', sim.switch.settlingRiseNs=5; sim.switch.transitionJitterStdPs=value;
             case 'power', sim.userPowerDb=u.userPowerDb*value;
@@ -64,7 +81,6 @@ plot_results(results,out); fprintf('Phase-1 %s sweeps saved: %s\n',profile,out);
             case 'powerIsolation', sim.userPowerDb=u.userPowerDb*value(1); sim.switch.isolationDb=value(2);
             case 'timingIsolation', sim.userTimingSamples=u.userTimingSamples*value(1); sim.switch.isolationDb=value(2);
         end
-        %#ok<NASGU> z
     end
     function m = measure(sim, seedOffset)
         s=RandStream('mt19937ar','Seed',sim.seed+seedOffset); err=0; evm=0; condHat=0; failure=false;
@@ -77,7 +93,9 @@ plot_results(results,out); fprintf('Phase-1 %s sweeps saved: %s\n',profile,out);
             end
         end
         nbits=sim.frames*numel(cfg.dataSlots)*package.nInfoBitsPerSlotLayer*cfg.nLayers;
-        m=struct('ber',max(err/nbits,1/nbits),'evm',evm/max(sim.frames,1), ...
+        rawBer=err/nbits;
+        m=struct('ber',max(rawBer,1/nbits),'rawBer',rawBer, ...
+            'errors',err,'bits',nbits,'evm',evm/max(sim.frames,1), ...
             'condHatP95',condHat/max(sim.frames,1),'failure',failure);
     end
 end
@@ -89,12 +107,7 @@ out=fullfile(root,['type1_phase1_' char(profile) '_' char(datetime('now','Format
 end
 
 function plot_results(r,out)
-f=figure('Visible','off','Color','w'); t=tiledlayout(2,3,'TileSpacing','compact');
-names=fieldnames(r.curves); for k=1:numel(names), c=r.curves.(names{k}); nexttile(t); x=c.values; x(isinf(x))=60; semilogy(x,c.ber,'-o'); grid on; title(names{k}); xlabel('parameter (Inf IS plotted as 60 dB)'); ylabel('BER upper bound'); end
-exportgraphics(f,fullfile(out,'phase1_single_variable.png'),'Resolution',160); close(f);
-f=figure('Visible','off','Color','w'); t=tiledlayout(2,2,'TileSpacing','compact'); names=fieldnames(r.heatmaps);
-for k=1:numel(names), h=r.heatmaps.(names{k}); nexttile(t); imagesc(h.x,h.y,h.values); axis xy; colorbar; title([names{k} ' (' h.metric ')']); xlabel('x'); ylabel('y'); end
-exportgraphics(f,fullfile(out,'phase1_heatmaps.png'),'Resolution',160); close(f);
+type1_plot_phase1_sweeps(r,out);
 end
 
 function v=env_positive(n,d),v=str2double(getenv(n));if ~isfinite(v)||v<=0,v=d;end,end

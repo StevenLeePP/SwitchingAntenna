@@ -62,6 +62,35 @@ cd /home/bupt/tools/matlab_test/nr4x4_type1
 sudo /home/bupt/tools/matlab/bin/matlab -batch "type1_tx_stop"
 ```
 
+## 实验报告补跑：Phase 0 基线与 Phase 1 六条曲线/四张热图
+
+这部分是 RX 服务器上的纯 MATLAB 离线链路，不访问 SDR，也不需要 `sudo`。Phase 0 用 CP 与 OFDM 符号尾部的相位差估计共同 CFO；Phase 1 `pilot` 对六个单变量各扫 5 点，并对四组变量各跑 5×5 热图，每点 3 帧：
+
+```bash
+ssh -tt -o 'ProxyCommand=ssh -W %h:%p bupt@10.156.64.30' bupt@10.156.64.41
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+env TYPE1_OFFLINE_OUTPUT_ROOT=/tmp/type1_report_phase0 \
+  /home/bupt/tools/matlab/bin/matlab -batch "type1_run_offline_baseline"
+env TYPE1_SWEEP_PROFILE=pilot TYPE1_SWEEP_FRAMES=3 \
+  TYPE1_OFFLINE_OUTPUT_ROOT=/tmp/type1_report_phase1 \
+  /home/bupt/tools/matlab/bin/matlab -batch "type1_run_phase1_sweeps"
+```
+
+本次报告实际使用的 Phase 1 MAT 已复制为 `data/experiment_phase1_pilot_20260720.mat`，SHA-256 为 `c851764ad68143c7062ecc04339ad60dda366d6e76493ff5fc086ee116208ffd`。若只想从该 MAT 重画物理轴名称完整的图片，不重新运行通信链路：
+
+```bash
+cd /home/bupt/tools/matlab_test/nr4x4_type1
+/home/bupt/tools/matlab/bin/matlab -batch \
+  "type1_plot_phase1_sweeps('/path/to/phase1_sweeps.mat','/tmp/type1_phase1_redraw')"
+```
+
+报告其余六张补充图只把 `EXPERT_REVIEW.md` 和 `REVIEW_VERDICTS.md` 已冻结数字画成图，不产生新的 BER/EVM 数据：
+
+```bash
+cd /root/lap/SwitchingAntenna/c_demo
+python3 tools/plot_experiment_report_figures.py
+```
+
 ## 离线 Phase 2：时变开关损伤与白化 RZF 基线
 
 此模式**不启动 TX/RX 板卡、不发射 OTA 信号**。它从共享 10 ms Type-A reference
@@ -1008,3 +1037,52 @@ disp(same) % [1 1 1 1 1 1 1]
 E2/E3 fresh 目录分别为 `.../type1_paper_e2_paper_20260716_112710/` 和
 `.../type1_paper_e3_20260716_112712/`；E2 的八个科学字段、E3 的四个科学字段逐项
 `isequaln` 均为 1，比较字段名和结果留痕见 `EXPERT_REVIEW.md` §47.5。
+
+## 完整实验报告的结构与链接审计
+
+`EXPERIMENT_REPORT.md` 是对既有冻结资产的重新编排，不生成新无线数据。报告中的实验
+数据仍应按前述 R1--R23 命令读取正式 MAT；以下命令只检查文档是否保留 38 个实验、公式/
+代码围栏是否成对，以及所有本地图片链接是否存在：
+
+```bash
+cd /root/lap/SwitchingAntenna/c_demo
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+p = Path('EXPERIMENT_REPORT.md')
+s = p.read_text(encoding='utf-8')
+experiments = re.findall(r'^## 实验 (\d+)：', s, flags=re.M)
+assert experiments == [str(i) for i in range(1, 39)], experiments
+assert s.count('### 实验介绍') == 38
+assert s.count('计算过程与量级判断') == 38
+bs = chr(92)
+assert bs + '(' not in s and bs + ')' not in s
+assert s.count('$$') % 2 == 0
+assert s.count('```') % 2 == 0
+links = re.findall(r'!\[[^]]*\]\(([^)]+)\)', s)
+missing = [x for x in links if not Path(x).exists()]
+assert not missing, missing
+in_fence = in_math = False
+def structural(x):
+    t = x.lstrip()
+    return not t or t.startswith(('#', '|', '![', '```', '$$', '---', '<', '> ')) or re.match(r'^(?:[-+*]|\d+\.)\s+', t)
+lines = s.splitlines()
+soft_wraps = 0
+for a, b in zip(lines, lines[1:]):
+    if a.strip().startswith('```'):
+        in_fence = not in_fence
+        continue
+    if a.strip() == '$$':
+        in_math = not in_math
+        continue
+    if not in_fence and not in_math and not structural(a) and not structural(b):
+        soft_wraps += 1
+assert soft_wraps == 0, soft_wraps
+print({'experiments': len(experiments), 'images': len(links), 'lines': len(s.splitlines())})
+PY
+git diff --check -- EXPERIMENT_REPORT.md README.md RUN_COMMANDS.md EXPERT_REVIEW.md
+```
+
+该审计不重新证明 BER、EVM、SINR、acquisition 或能效数字；这些科学量以各 R 编号正式
+MAT、seed、SHA-256 和 `REVIEW_VERDICTS.md` 的独立复现为准。
